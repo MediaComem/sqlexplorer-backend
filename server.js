@@ -1,28 +1,32 @@
-var express = require('express');
-var bodyParser = require('body-parser');
-var Pool = require('pg').Pool;
-// var oracledb = require('oracledb');
-var app = express();
-var cors = require('cors');
-var basicAuth = require('basic-auth-connect');
-var xmlBuilder = require('xmlbuilder');
-var AdmZip = require('adm-zip');
-var exec = require("child_process").exec;
-var tmp = require('tmp');
-var Raven = require('raven');
-var passport = require('passport');
-var BasicStrategy = require('passport-http').BasicStrategy;
+const express = require('express');
+const bodyParser = require('body-parser');
+const Pool = require('pg').Pool;
+// const oracledb = require('oracledb');
+const mssql = require('mssql');
+const app = express();
+const cors = require('cors');
+const basicAuth = require('basic-auth-connect');
+const xmlBuilder = require('xmlbuilder');
+const AdmZip = require('adm-zip');
+const exec = require("child_process").exec;
+const tmp = require('tmp');
+const Raven = require('raven');
+const passport = require('passport');
+const BasicStrategy = require('passport-http').BasicStrategy;
 
-var pgConString = "postgres://root:Math3r$0n@localhost/sqlexplorer";
-var pgConAdminString = "postgres://root:Math3r$0n@localhost/sqlexplorer";
-var oraclePool;
-var pgPool = new Pool({ connectionString: pgConString });
-var pgAdminPool = new Pool({ connectionString: pgConAdminString });
+const ENV = require('./env.test');
+
+const pgConString = "postgres://root:Math3r$0n@localhost/sqlexplorer";
+const pgConAdminString = "postgres://root:Math3r$0n@localhost/sqlexplorer";
+let oraclePool;
+
+const pgPool = new Pool({ connectionString: pgConString });
+const pgAdminPool = new Pool({ connectionString: pgConAdminString });
 pgPool.on('error', function(err, client) {
   Raven.captureException(err);
 });
 
-var SENTRY_DSN = '';
+const SENTRY_DSN = '';
 
 Raven.config(SENTRY_DSN).install();
 app.use(Raven.requestHandler());
@@ -47,9 +51,9 @@ app.use(express.static('schema_pics'));
 app.use(passport.initialize());
 
 
-var jsonParser = bodyParser.json();
-var txtParser = bodyParser.text();
-var urlencodedParser = bodyParser.urlencoded({ extended: false });
+const jsonParser = bodyParser.json();
+const txtParser = bodyParser.text();
+const urlencodedParser = bodyParser.urlencoded({ extended: false });
 
 app.post('/api/evaluate', jsonParser, function(req, res) {
   if (!req.body) return res.sendStatus(400);
@@ -230,8 +234,8 @@ app.get('/api/logs/:user_id',
 
 
 function createScorm(req, res, rows) {
-  var scormName = 'SQL|Explorer';
-  var xml = xmlBuilder.create('manifest', { version: '1.0', encoding: 'UTF-8' });
+  const scormName = 'SQL|Explorer';
+  const xml = xmlBuilder.create('manifest', { version: '1.0', encoding: 'UTF-8' });
   xml.att('identifier', scormName);
   xml.att('version', '1.2');
   xml.att('xmlns', 'http://www.imsproject.org/xsd/imscp_rootv1p1p2');
@@ -239,13 +243,13 @@ function createScorm(req, res, rows) {
   xml.att('xmlns:imsmd', 'http://www.imsglobal.org/xsd/imsmd_rootv1p2p1');
   xml.att('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance');
   xml.att('xsi:schemaLocation', 'http://www.imsproject.org/xsd/imscp_rootv1p1p2 imscp_rootv1p1p2.xsd http://www.imsglobal.org/xsd/imsmd_rootv1p2p1 imsmd_rootv1p2p1.xsd http://www.adlnet.org/xsd/adlcp_rootv1p2 adlcp_rootv1p2.xsd');
-  var org = xml.ele('organizations', { default: 'sqlexplorer' })
+  const org = xml.ele('organizations', { default: 'sqlexplorer' })
     .ele('organization', { identifier: 'sqlexplorer', structure: 'hierarchical' });
   org.ele('title', {}, scormName);
 
   rows.forEach(function(row, idx) {
-    var i = idx + 1;
-    var item = org.ele('item', { identifier: 'ITEM-' + i, identifierref: 'sco_target', isvisible: 'true', parameters: 'id=' + row.id });
+    const i = idx + 1;
+    const item = org.ele('item', { identifier: 'ITEM-' + i, identifierref: 'sco_target', isvisible: 'true', parameters: 'id=' + row.id });
     item.ele('title', {}, 'Question ' + i);
     item.ele('adlcp:masteryscore', {}, '1');
   });
@@ -253,7 +257,7 @@ function createScorm(req, res, rows) {
     .ele('resource', { identifier: 'sco_target', 'adlcp:scormtype': 'sco', href: 'index.html', type: 'webcontent' })
     .ele('file', { href: 'index.html' });
 
-  var zip = new AdmZip();
+  const zip = new AdmZip();
   zip.addLocalFile('scorm/adlcp_rootv1p2.xsd');
   zip.addLocalFile('scorm/ims_xml.xsd');
   zip.addLocalFile('scorm/imscp_rootv1p1p2.xsd');
@@ -434,11 +438,11 @@ app.post('/api/questions', jsonParser,
         Raven.captureException(err);
         return;
       }
-      var keywords = req.body.keywords || [];
-      var dbname = req.body.dbname || 'ALL';
-      var andOr = req.body.inclusive === '1' ? 'OR' : 'AND';
+      const keywords = req.body.keywords || [];
+      const dbname = req.body.dbname || 'ALL';
+      const andOr = req.body.inclusive === '1' ? 'OR' : 'AND';
 
-      var sql = `SELECT t.id, t.text, t.sql, t.db_schema, json_agg(keyword) AS keywords
+      let sql = `SELECT t.id, t.text, t.sql, t.db_schema, json_agg(keyword) AS keywords
         FROM (
           SELECT q.id, q.text, q.sql, q.db_schema, k.name AS keyword
           FROM questions q
@@ -493,7 +497,7 @@ app.get('/api/db/:dbname', function(req, res) {
   exportDBSchema(req, res, req.params.dbname);
 });
 
-var connectData = {
+const connectData = {
   connectString: 'sql:1521/exercices',
   user: 'sqlexplorer',
   password: 'readonly',
@@ -503,11 +507,18 @@ var connectData = {
   poolTimeout: 4
 };
 
+const config = {
+  user: ENV.username,
+  password: ENV.password,
+  server: '127.0.0.1\\MPESQLSERVER'
+};
+
+const mssqlPool = new mssql.ConnectionPool(config);
 
 // oracledb.createPool(connectData,
 //   function(err, pool) {
 //     oraclePool = pool;
-//     var server = app.listen(3001, function() {
+//     const server = app.listen(3001, function() {
 //       console.log('Listening on port %d', server.address().port);
 //     });
 //   });
@@ -530,7 +541,7 @@ app.get('/api/pdf/:id', function(req, res) {
 });
 
 function query(req, res) {
-  var schema = 'SQLEXPLORER';
+  let schema = 'SQLEXPLORER';
   if (req.body.db) {
     schema = req.body.db.replace(/[^a-z_0-9]/gi, '').toUpperCase();
   }
@@ -545,17 +556,17 @@ function query(req, res) {
       if (!req.body.sql) {
         return res.sendStatus(404);
       }
-      var sqlToTest = req.body.sql.replace(/;/g, '');
+      const sqlToTest = req.body.sql.replace(/;/g, '');
 
       connection.execute(sqlToTest, [], function(err, results) {
-        var data = {
+        const data = {
           headers: [],
           content: [],
           numrows: 0
         };
 
         function answer(correct, msg) {
-          var log = {
+          const log = {
             activity: schema,
             question_id: undefined,
             query: req.body.sql,
@@ -621,7 +632,7 @@ function query(req, res) {
           //if exercise check answer
           if (req.body.id) {
             getQuestionByID(req.body.id, function(question) {
-              var sqlAnswer = question.sql;
+              const sqlAnswer = question.sql;
               connection.execute(sqlAnswer.replace(/;/g, ''), [], function(err, resultsAnswer) {
                 if (err) {
                   console.log('Error executing query sqlAnswer:', err);
@@ -637,7 +648,7 @@ function query(req, res) {
                 //test if the row numbers are the same before testing sets to catch DISTINCT
                 if (results.rows.length === resultsAnswer.rows.length) {
                   //evaluate if A-B Union set B-A ? empty)
-                  var sqlSets = `
+                  const sqlSets = `
                     (SELECT * FROM (${sqlAnswer.replace(/;/g, '')}) MINUS SELECT * FROM (${sqlToTest}))
                     UNION
                     (SELECT * FROM (${sqlToTest}) MINUS SELECT * FROM (${sqlAnswer.replace(/;/g, '')}))
@@ -655,14 +666,14 @@ function query(req, res) {
                       //if the returned result is empty the user's query was certainly correct
                       //if there is an order by we have to compare lines
                       if (sqlAnswer.toUpperCase().match(/ORDER\s+BY/)) {
-                        var a, b;
-                        for (var i = 0; i < resultsAnswer.rows.length; i++) {
-                          for (var j = 0; j < resultsAnswer.rows[i].length; j++) {
+                        let a, b;
+                        for (let i = 0; i < resultsAnswer.rows.length; i++) {
+                          for (let j = 0; j < resultsAnswer.rows[i].length; j++) {
                             a = resultsAnswer.rows[i][j];
                             b = results.rows[i][j];
                             if (a.constructor === Date) {
                               if (a.getTime() !== b.getTime()) {
-                                answer(false, 'vérifier ordre'); 
+                                answer(false, 'vérifier ordre');
                                 return;
                               }
                             } else {
@@ -691,40 +702,98 @@ function query(req, res) {
   });
 }
 
-function getDBList(req, res) {
-  oraclePool.getConnection(function(err, connection) {
-    if (err) { console.log('Error connecting to db:', err); res.sendStatus(500); return; }
-    connection.execute("SELECT owner, COUNT(*) AS TableCount FROM user_tab_privs WHERE type = 'TABLE' GROUP BY owner ORDER BY owner", [], function(err, results) {
-      var r = results.rows.map(function(row) {
-        return { 'OWNER': row[0], 'TABLECOUNT': row[1] };
-      });
-      res.write(JSON.stringify(r));
-      connection.release(function(err) {
-        if (err) {
-          console.error(err.message);
-          Raven.captureException(err);
-        }
-      });
-      connection.release(function(err) {
-        if (err) {
-          console.error(err.message);
-          Raven.captureException(err);
-        }
-      });
-      res.end();
-    });
-  });
+async function getDBList(req, res) {
+
+  let connection;
+  try {
+    connection = await mssqlPool.connect();
+
+    const result = await connection.request()
+      // Query written by dsz on https://stackoverflow.com/a/44428117/4687028
+      .query(`
+        SELECT top 0 * INTO #temp
+        FROM INFORMATION_SCHEMA.TABLES;
+        
+        INSERT INTO #temp EXEC sp_msforeachdb 'SELECT * FROM [?].INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE=''BASE TABLE''';
+        
+        SELECT TABLE_CATALOG AS OWNER, count(*) AS TABLECOUNT
+        FROM #temp
+        WHERE TABLE_CATALOG NOT IN ('master', 'msdb', 'tempdb')
+        GROUP BY TABLE_CATALOG;
+        
+        DROP TABLE #temp;
+      `);
+
+    res.write(JSON.stringify(result.recordset));
+  } catch (err) {
+    console.log('Error', err);
+    res.sendStatus(500);
+  }
+
+  connection && connection.close();
+  res.end();
+
+  // mssqlPool.connect()
+  //   .catch(err => {
+  //     console.log('Error connecting to db:', err);
+  //     res.sendStatus(500);
+  //   })
+  //   .then(connection => {
+  //     return connection.request()
+  //       .query(`
+  //         SELECT name
+  //         FROM master.dbo.sysdatabases
+  //         WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')
+  //         ORDER BY name
+  //       `);
+  //   })
+  //   .then(result => {
+  //     res.write(JSON.stringify(result));
+  //   })
+  //   .catch(err => {
+  //     console.log('Error', err);
+  //     res.sendStatus(500);
+  //   })
+  //   .then(() => res.end());
 }
+
+// function getDBList(req, res) {
+//   oraclePool.getConnection(function(err, connection) {
+//     if (err) {
+//       console.log('Error connecting to db:', err);
+//       res.sendStatus(500); return;
+//     }
+//     connection.execute("SELECT owner, COUNT(*) AS TableCount FROM user_tab_privs WHERE type = 'TABLE' GROUP BY owner ORDER BY owner", [], function(err, results) {
+//       const r = results.rows.map(function(row) {
+//         return { 'OWNER': row[0], 'TABLECOUNT': row[1] };
+//       });
+//       res.write(JSON.stringify(r));
+//       connection.release(function(err) {
+//         if (err) {
+//           console.error(err.message);
+//           Raven.captureException(err);
+//         }
+//       });
+//       connection.release(function(err) {
+//         if (err) {
+//           console.error(err.message);
+//           Raven.captureException(err);
+//         }
+//       });
+//       res.end();
+//     });
+//   });
+// }
 
 
 function exportDBSchema(req, res, dbname) {
-  var schema = dbname.replace(/[^a-z_0-9]/gi, '').toUpperCase();
+  const schema = dbname.replace(/[^a-z_0-9]/gi, '').toUpperCase();
   oraclePool.getConnection(function(err, connection) {
     if (err) { console.log('Error connecting to db:', err); res.sendStatus(500); return; }
     connection.execute('ALTER SESSION SET CURRENT_SCHEMA="' + schema + '"', [], function(err, results) {
       if (err) { console.log('Error executing query:', err); res.sendStatus(500); return; }
 
-      var tableColumnsAndFksSQL = `
+      let tableColumnsAndFksSQL = `
         SELECT acol.table_name, acol.column_name, acol.data_type, acol.data_length, acol.data_precision, acol.data_scale, acol.nullable, fk.constraint_name, fk.r_owner, fk.r_constraint_name, fk.r_table_name, fk.r_column_name
         FROM all_tab_cols acol
         LEFT JOIN (
@@ -743,7 +812,7 @@ function exportDBSchema(req, res, dbname) {
       tableColumnsAndFksSQL += "' ORDER BY acol.table_name, acol.column_id";
       connection.execute(tableColumnsAndFksSQL, [], function(err, tableColumnsAndFks) {
         if (err) { console.log('Error fetchings data:', err); res.sendStatus(500); return; }
-        var primaryKeysSQL = `
+        let primaryKeysSQL = `
           SELECT col.table_name, col.column_name, col.constraint_name
           FROM all_cons_columns col, all_constraints cons
           WHERE col.table_name = cons.table_name
@@ -769,18 +838,18 @@ function exportDBSchema(req, res, dbname) {
         */
         connection.execute(primaryKeysSQL, [], function(err, primaryKeys) {
           if (err) { console.log('Error fetchings data:', err); res.sendStatus(500); return; }
-          var xml = xmlBuilder.create('sql');
+          const xml = xmlBuilder.create('sql');
           //datatypes
           //tables
-          var lastTable = '';
-          for (var t = 0; t < tableColumnsAndFks.length; t++) {
-            var table = tableColumnsAndFks[t][0];
-            var tableNode;
+          let lastTable = '';
+          for (let t = 0; t < tableColumnsAndFks.length; t++) {
+            const table = tableColumnsAndFks[t][0];
+            let tableNode;
             if (lastTable != table) {
               //write table
               tableNode = xml.ele('table', { name: camelCase(table) });
             }
-            var rowNode = tableNode.ele('row', {
+            const rowNode = tableNode.ele('row', {
               name: camelCase(tableColumnsAndFks[t][1]),
               null: tableColumnsAndFks[t][6] === 'Y' ? 1 : 0
             });
@@ -794,14 +863,14 @@ function exportDBSchema(req, res, dbname) {
 
             //Pkeys
             if (lastTable != table || t === tableColumnsAndFks.length) {
-              var parts = primaryKeys.rows.filter(function(elem) {
+              const parts = primaryKeys.rows.filter(function(elem) {
                 return elem[0] === table;
               });
               /*
                 table_name, column_name, constraint_name
               */
               if (parts.length > 0) {
-                var pkeyNode = tableNode.ele('key', { name: parts[0][2], type: 'PRIMARY' });
+                const pkeyNode = tableNode.ele('key', { name: parts[0][2], type: 'PRIMARY' });
                 parts.forEach(function(elem) {
                   pkeyNode.ele('part', {}, camelCase(elem[1]));
                 });
@@ -825,19 +894,19 @@ function exportDBSchema(req, res, dbname) {
 }
 
 function camelCase(word) {
-  var tableNames = [];
-  var customKeywords = ["prix", "date", "quantite", "limite", "dossier", "chassis", "publicitaire",
+  const tableNames = [];
+  const customKeywords = ["prix", "date", "quantite", "limite", "dossier", "chassis", "publicitaire",
     "article", "principal", "heure", "dossard", "annee", "horaire", "specialiste", "medecin", "generaliste",
     "places", "ordre", "federation", "standard", "reparation", "stock", "volume", "unite", "mesure",
     "piece", "plaque", "appel", "temps", "travaux", "rechange"];
-  var keywords = customKeywords.concat(tableNames);
+  const keywords = customKeywords.concat(tableNames);
   //arsort($keywords);
   ucKeywords = [];
   keywords.forEach(function(capitalizeMe) {
     ucKeywords.push(capitalizeMe.charAt(0).toUpperCase() + capitalizeMe.substring(1).toLowerCase());
   });
 
-  var missingkey = str_replace(keywords, '', word);
+  const missingkey = str_replace(keywords, '', word);
   if (missingkey != 'tbl') {
     keywords.push(missingkey);
     ucKeywords.push(missingkey.charAt(0).toUpperCase() + missingkey.substring(1).toLowerCase());
@@ -862,13 +931,13 @@ function str_replace(search, replace, subject, count) {
   //    input by: Brett Zamir (http://brett-zamir.me)
   //    input by: Oleg Eremeev
   //        note: The count parameter must be passed as a string in order
-  //        note: to find a global variable in which the result will be given
+  //        note: to find a global constiable in which the result will be given
   //   example 1: str_replace(' ', '.', 'Kevin van Zonneveld');
   //   returns 1: 'Kevin.van.Zonneveld'
   //   example 2: str_replace(['{name}', 'l'], ['hello', 'm'], '{name}, lars');
   //   returns 2: 'hemmo, mars'
 
-  var i = 0,
+  let i = 0,
     j = 0,
     temp = '',
     repl = '',
