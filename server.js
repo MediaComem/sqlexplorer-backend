@@ -57,7 +57,8 @@ const txtParser = bodyParser.text();
 const urlencodedParser = bodyParser.urlencoded({ extended: false });
 
 app.post('/api/evaluate', jsonParser, function(req, res) {
-  if (!req.body) return res.sendStatus(400);
+  console.log(req.body);
+  //if (!req.body.db || !req.body.sql) return res.sendStatus(400);
   // create user in req.body
   query(req, res);
 });
@@ -80,11 +81,10 @@ app.get('/api/questiontext/:id', function(req, res) {
           res.sendStatus(500);
         }
         if (result.rows.length > 0) {
-          res.write(JSON.stringify(result.rows[0]));
+          res.send(JSON.stringify(result.rows[0]));
         } else {
           res.sendStatus(404);
         }
-        res.end();
         done();
       });
   });
@@ -123,7 +123,7 @@ app.post('/api/question', jsonParser,
   function(req, res) {
     if (!req.body) return res.sendStatus(400);
     console.log(req.body);
-    upsertQuestion(req, res, req.body);
+    upsertQuestion(req, res);
   });
 
 app.get('/api/scorm/:id',
@@ -260,7 +260,7 @@ function createScorm(req, res, rows) {
   zip.addLocalFile('scorm/ims_xml.xsd');
   zip.addLocalFile('scorm/imscp_rootv1p1p2.xsd');
   zip.addLocalFile('scorm/imsmd_rootv1p2p1.xsd');
-  // zip.addLocalFile('public/index.html');
+  zip.addLocalFile('public/index.html');
   zip.addFile('imsmanifest.xml', new Buffer(xml.end({ pretty: true })));
   res.write(zip.toBuffer());
   res.end();
@@ -393,9 +393,8 @@ app.post('/api/assignment', jsonParser,
             return;
           }
           if (result.rows.length > 0) {
-            res.write(JSON.stringify(result.rows[0]));
+            res.send(JSON.stringify(result.rows[0]));
           }
-          res.end();
           done();
         });
     });
@@ -419,8 +418,9 @@ app.post('/api/assignment/:assignmentId/question', jsonParser,
             Raven.captureException(err);
             res.sendStatus(500);
             return;
+          } else {
+            res.sendStatus(200);
           }
-          res.end();
           done();
         });
     });
@@ -438,7 +438,7 @@ app.post('/api/questions', jsonParser,
         return;
       }
       const keywords = req.body.keywords || [];
-      const dbname = req.body.dbname.toUpperCase() || 'ALL';
+      const dbname = (req.body.dbname || 'ALL').toUpperCase();
       const andOr = req.body.inclusive === '1' ? 'OR' : 'AND';
 
       let sql = `SELECT t.id, t.text, t.sql, t.db_schema, json_agg(keyword) AS keywords
@@ -448,7 +448,7 @@ app.post('/api/questions', jsonParser,
           JOIN keywords k ON lower(q.sql) LIKE  '%' || lower(k.name) || '%'`;
 
       if (dbname !== 'ALL') {
-        sql += 'WHERE q.db_schema = $' + (keywords.length + 1);
+        sql += 'WHERE UPPER(q.db_schema) = $' + (keywords.length + 1);
       }
 
       sql += ` ORDER BY keyword, sql
@@ -476,8 +476,7 @@ app.post('/api/questions', jsonParser,
             res.sendStatus(500);
           }
           if (result.rows) {
-            res.write(JSON.stringify(result.rows));
-            res.end();
+            res.send(JSON.stringify(result.rows));
           } else {
             res.sendStatus(404);
           }
@@ -499,10 +498,23 @@ app.get('/api/db/:dbname', function(req, res) {
 const config = {
   user: ENV.username,
   password: ENV.password,
-  server: ENV.mssql.server + "\\" + ENV.mssql.instanceName + "false"
+  server: ENV.mssql.server + "\\" + ENV.mssql.instanceName
 };
 
 const mssqlPool = new mssql.ConnectionPool(config);
+
+// Patch for https://github.com/patriksimek/node-mssql/issues/467
+// Provided by Pierre-Élie Fauché (https://github.com/pierre-elie)
+mssqlPool._throwingClose = mssqlPool._close;
+mssqlPool._close = function(callback) {
+  const close = mssqlPool._throwingClose.bind(this, callback);
+  if (this.pool) {
+    return this.pool.drain().then(close);
+  }
+  else {
+    return close();
+  }
+};
 
 //export sql sol to pdf
 app.get('/api/pdf/:id', function(req, res) {
@@ -521,7 +533,7 @@ app.get('/api/pdf/:id', function(req, res) {
 });
 
 function query(req, res) {
-  let schema = req.body.db ? req.body.db.replace(/[^a-z_0-9]/gi, '').toUpperCase() : 'SQLEXPLORER';
+  let schema = req.body.db.replace(/[^a-z_0-9]/gi, '').toUpperCase();
 
   mssqlPool.connect(err => {
     if (err) {
@@ -539,12 +551,12 @@ function query(req, res) {
       transaction.request().query(`USE ${schema};`, (err, result) => {
         if (err) {
           console.log('Error executing query:', err);
-          transaction.rollback().then(() => { mssqlPool.close(); });
+          mssqlPool.close();
           return res.sendStatus(500);
         }
 
         if (!req.body.sql) {
-          transaction.rollback().then(() => { mssqlPool.close(); });
+          transaction.rollback().then(() => mssqlPool.close());
           return res.sendStatus(404);
         }
 
@@ -1057,7 +1069,8 @@ function logAnswer(log) {
   });
 }
 
-function upsertQuestion(req, res, question) {
+function upsertQuestion(req, res) {
+  const question = req.body;
   pgAdminPool.connect(function(err, client, done) {
     if (err) {
       console.error('error fetching client from pool', err);
@@ -1078,9 +1091,8 @@ function upsertQuestion(req, res, question) {
             return;
           }
           if (result.rows.length > 0) {
-            res.write(JSON.stringify(result.rows[0]));
+            res.send(JSON.stringify(result.rows[0]));
           }
-          res.end();
           done();
         });
     } else {
@@ -1094,9 +1106,8 @@ function upsertQuestion(req, res, question) {
             return;
           }
           if (result.rows.length > 0) {
-            res.write(JSON.stringify(result.rows[0]));
+            res.send(JSON.stringify(result.rows[0]));
           }
-          res.end();
           done();
         });
     }

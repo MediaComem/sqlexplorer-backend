@@ -44,3 +44,14 @@ Question / assignment  management
 /api/assignment/list
 /api/assignment/:id
 ```
+
+## Dependencies documentation
+
+This project depends upon these packages :
+
+* `mssql` - A Microsoft SQL Server client - https://www.npmjs.com/package/mssql
+* `object.reduce` - A library that allows using `reduce` with Objects - https://www.npmjs.com/package/object.reduce
+
+### Misc documentation
+
+* `tedious` - The `mssql` package is based on the Tedious driver - http://tediousjs.github.io/tedious/getting-started.html
