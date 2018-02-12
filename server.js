@@ -13,6 +13,7 @@ const tmp = require('tmp');
 const Raven = require('raven');
 const passport = require('passport');
 const BasicStrategy = require('passport-http').BasicStrategy;
+const reduce = require('object.reduce');
 
 const ENV = require('./env.test');
 
@@ -47,7 +48,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.static('public'));
-app.use(express.static('schema_pics'));
+app.use('/schema_pics', express.static('schema_pics'));
 app.use(passport.initialize());
 
 
@@ -58,7 +59,6 @@ const urlencodedParser = bodyParser.urlencoded({ extended: false });
 app.post('/api/evaluate', jsonParser, function(req, res) {
   if (!req.body) return res.sendStatus(400);
   // create user in req.body
-  console.log(req.body);
   query(req, res);
 });
 
@@ -231,8 +231,6 @@ app.get('/api/logs/:user_id',
   }
 );
 
-
-
 function createScorm(req, res, rows) {
   const scormName = 'SQL|Explorer';
   const xml = xmlBuilder.create('manifest', { version: '1.0', encoding: 'UTF-8' });
@@ -338,8 +336,9 @@ app.get('/api/assignment/:id',
         console.error('error running query', err);
         Raven.captureException(err);
         res.sendStatus(500);
+      } else {
+        res.write(JSON.stringify(result.rows));
       }
-      res.write(JSON.stringify(result.rows));
       res.end();
     });
   }
@@ -439,7 +438,7 @@ app.post('/api/questions', jsonParser,
         return;
       }
       const keywords = req.body.keywords || [];
-      const dbname = req.body.dbname || 'ALL';
+      const dbname = req.body.dbname.toUpperCase() || 'ALL';
       const andOr = req.body.inclusive === '1' ? 'OR' : 'AND';
 
       let sql = `SELECT t.id, t.text, t.sql, t.db_schema, json_agg(keyword) AS keywords
@@ -457,7 +456,7 @@ app.post('/api/questions', jsonParser,
         GROUP BY t.id, t.text, t.sql, t.db_schema`;
 
       if (keywords.length > 0) {
-        sql += 'HAVING ';
+        sql += ' HAVING ';
         keywords.forEach(function(keywords, i) {
           if (i > 0) {
             sql += andOr;
@@ -497,32 +496,13 @@ app.get('/api/db/:dbname', function(req, res) {
   exportDBSchema(req, res, req.params.dbname);
 });
 
-const connectData = {
-  connectString: 'sql:1521/exercices',
-  user: 'sqlexplorer',
-  password: 'readonly',
-  poolMax: 44,
-  poolMin: 2,
-  poolIncrement: 5,
-  poolTimeout: 4
-};
-
 const config = {
   user: ENV.username,
   password: ENV.password,
-  server: '127.0.0.1\\MPESQLSERVER'
+  server: ENV.mssql.server + "\\" + ENV.mssql.instanceName + "false"
 };
 
 const mssqlPool = new mssql.ConnectionPool(config);
-
-// oracledb.createPool(connectData,
-//   function(err, pool) {
-//     oraclePool = pool;
-//     const server = app.listen(3001, function() {
-//       console.log('Listening on port %d', server.address().port);
-//     });
-//   });
-
 
 //export sql sol to pdf
 app.get('/api/pdf/:id', function(req, res) {
@@ -541,24 +521,175 @@ app.get('/api/pdf/:id', function(req, res) {
 });
 
 function query(req, res) {
-  let schema = 'SQLEXPLORER';
-  if (req.body.db) {
-    schema = req.body.db.replace(/[^a-z_0-9]/gi, '').toUpperCase();
-  }
-  oraclePool.getConnection(function(err, connection) {
+  let schema = req.body.db ? req.body.db.replace(/[^a-z_0-9]/gi, '').toUpperCase() : 'SQLEXPLORER';
+
+  mssqlPool.connect(err => {
     if (err) {
+      console.log(err instanceof mssql.ConnectionError);
       console.log('Error connecting to db:', err);
-      res.sendStatus(500);
-      return;
+      return res.sendStatus(500);
     }
-    connection.execute('ALTER SESSION SET CURRENT_SCHEMA="' + schema + '"', [], function(err, results) {
-      if (err) { console.log('Error executing query:', err); res.sendStatus(500); return; }
+    const transaction = new mssql.Transaction(mssqlPool);
+    transaction.begin(err => {
+      if (err) {
+        console.log('Error connecting to db:', err);
+        mssqlPool.close();
+        return res.sendStatus(500);
+      }
+      transaction.request().query(`USE ${schema};`, (err, result) => {
+        if (err) {
+          console.log('Error executing query:', err);
+          transaction.rollback().then(() => { mssqlPool.close(); });
+          return res.sendStatus(500);
+        }
+
+        if (!req.body.sql) {
+          transaction.rollback().then(() => { mssqlPool.close(); });
+          return res.sendStatus(404);
+        }
+
+        const sqlToTest = req.body.sql.replace(/;/g, '');
+
+        transaction.request().query(sqlToTest, (err, result) => {
+          const data = {
+            headers: [],
+            content: [],
+            numrows: 0
+          };
+
+          function answer(correct, msg) {
+            const log = {
+              activity: schema,
+              question_id: undefined,
+              query: req.body.sql,
+              error: undefined,
+              user_id: undefined,
+              user_name: undefined,
+              ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress
+            };
+
+            if (typeof (correct) !== 'undefined') {
+              data.correct = log.correct = correct;
+            }
+            if (data.correct) {
+              data.answer = msg;
+            } else {
+              if (typeof (msg) !== 'undefined') {
+                data.error = log.error = msg;
+              }
+            }
+            if (req.body.id) {
+              log.question_id = req.body.id;
+            }
+            if (req.body.user_id) {
+              log.user_id = req.body.user_id;
+            }
+            if (req.body.user_name) {
+              log.user_name = req.body.user_name;
+            }
+
+            logAnswer(log);
+
+            transaction.commit().then(() => { mssqlPool.close(); });
+            res.send(JSON.stringify(data));
+          }
+
+          if (err) {
+            transaction.rollback().then(() => { mssqlPool.close(); });
+            res.send(JSON.stringify({ error: err.toString() }));
+          } else {
+            if (result.recordset.length > 0) {
+              reduce(result.recordset.columns, (acc, value) => {
+                acc.push(value.name);
+                return acc;
+              }, data.headers);
+              data.content = result.recordset.slice(0, 1000).map(function(row) {
+                Object.keys(row).forEach(key => {
+                  if (row[key] === null) { row[key] = '(NULL)'; }
+                });
+                return row;
+              });
+              data.numrows = result.recordset.length;
+            }
+
+            if (req.body.id) {
+              getQuestionByID(req.body.id, question => {
+                const sqlAnswer = question.sql;
+                transaction.request().query(sqlAnswer.replace(/;/g, ''), (err, resultAnswer) => {
+                  if (err) {
+                    console.log('Error executing query sqlAnswer:', err);
+                    transaction.rollback().then(() => { mssqlPool.close(); });
+                    return res.sendStatus(500);
+                  }
+                  if (result.recordset.length === resultAnswer.recordset.length) {
+                    if (Object.keys(result.recordset.columns).length !== Object.keys(resultAnswer.recordset.columns).length) {
+                      answer(false, 'vérifier select');
+                    } else {
+                      const sqlSets = `
+                        (${sqlAnswer.replace(/;/g, '').toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')} EXCEPT ${sqlToTest.toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')})
+                        UNION
+                        (${sqlToTest.toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')} EXCEPT ${sqlAnswer.replace(/;/g, '').toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')})
+                      `;
+
+                      transaction.request().query(sqlSets, (err, resultsSets) => {
+                        if (err) {
+                          answer(false, 'erreur de vérification: ' + err.message);
+                        } else if (resultsSets.recordset.length > 0) {
+                          answer(false, 'pas la bonne réponse');
+                        } else {
+                          let orderError = false;
+                          if (sqlAnswer.toUpperCase().match(/ORDER\s+BY/)) {
+                            let i = 0;
+                            while (!orderError && i < resultAnswer.recordset.length) {
+                              Object.keys(resultAnswer.recordset[i]).some(key => {
+                                const a = resultAnswer.recordset[i][key];
+                                const b = result.recordset[i][key];
+                                if (a.constructor === Date) {
+                                  if (a.getTime() !== b.getTime()) {
+                                    orderError = true;
+                                  }
+                                } else {
+                                  if (a !== b) {
+                                    orderError = true;
+                                  }
+                                }
+                                return orderError;
+                              });
+                              i++;
+                            }
+                          }
+                          orderError ? answer(false, 'vérifier ordre') : answer(true, sqlAnswer);
+                        }
+                      });
+                    }
+                  } else {
+                    answer(false, 'vérifier conditions et schéma');
+                  }
+                });
+              });
+            } else {
+              answer();
+            }
+          }
+        });
+      });
+    });
+  });
+  /*
+  mssqlPool.connect(function(err) {
+    new mssql.Request(mssqlPool).query(`USE ${schema};`, (err, result) => {
+      if (err) {
+        console.log('Error executing query:', err);
+        return res.sendStatus(500);
+      }
+
       if (!req.body.sql) {
         return res.sendStatus(404);
       }
+
       const sqlToTest = req.body.sql.replace(/;/g, '');
 
-      connection.execute(sqlToTest, [], function(err, results) {
+      new mssql.Request(mssqlPool).query(sqlToTest, (err, result) => {
         const data = {
           headers: [],
           content: [],
@@ -575,6 +706,7 @@ function query(req, res) {
             user_name: undefined,
             ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress
           };
+
           if (typeof (correct) !== 'undefined') {
             data.correct = correct;
             log.correct = correct;
@@ -600,90 +732,56 @@ function query(req, res) {
           logAnswer(log);
 
           res.write(JSON.stringify(data));
-          connection.release(function(err) {
-            if (err) {
-              console.error(err.message);
-              Raven.captureException(err);
-            }
-          }); // call only when query is finished executing
+          mssqlPool.close();
           res.end();
-        } // answer function
+        }
 
         if (err) {
           res.write(JSON.stringify({ error: err.toString() }));
-          connection.release(function(err) {
-            if (err) {
-              console.error(err.message);
-              Raven.captureException(err);
-            }
-          });
+          mssqlPool.close();
           res.end();
         } else {
-          if (results.rows.length > 0) {
-            data.headers = results.metaData.map(function(h) { return h.name; });
-            data.content = results.rows.slice(0, 1000).map(function(row) {
-              return row.map(function(c) {
-                return c === null ? '(NULL)' : c;
+          if (result.recordset.length > 0) {
+            reduce(result.recordset.columns, (acc, value) => {
+              acc.push(value.name);
+              return acc;
+            }, data.headers);
+            data.content = result.recordset.slice(0, 1000).map(function(row) {
+              reduce(row, (acc, value, key) => {
+                if (value === null) row[key] = '(NULL)';
               });
+              return row;
             });
-            data.numrows = results.rows.length;
+            data.numrows = result.recordset.length;
           }
 
-          //if exercise check answer
           if (req.body.id) {
-            getQuestionByID(req.body.id, function(question) {
+            getQuestionByID(req.body.id, question => {
               const sqlAnswer = question.sql;
-              connection.execute(sqlAnswer.replace(/;/g, ''), [], function(err, resultsAnswer) {
+              new mssql.Request(mssqlPool).query(sqlAnswer.replace(/;/g, ''), (err, resultAnswer) => {
                 if (err) {
                   console.log('Error executing query sqlAnswer:', err);
-                  connection.release(function(err) {
-                    if (err) {
-                      console.error(err.message);
-                      Raven.captureException(err);
-                    }
-                  });
+                  mssqlPool.close();
                   res.sendStatus(500);
                   return;
                 }
-                //test if the row numbers are the same before testing sets to catch DISTINCT
-                if (results.rows.length === resultsAnswer.rows.length) {
-                  //evaluate if A-B Union set B-A ? empty)
+
+                if (results.recordset.length === resultAnswer.recordset.length) {
                   const sqlSets = `
                     (SELECT * FROM (${sqlAnswer.replace(/;/g, '')}) MINUS SELECT * FROM (${sqlToTest}))
                     UNION
                     (SELECT * FROM (${sqlToTest}) MINUS SELECT * FROM (${sqlAnswer.replace(/;/g, '')}))
                   `;
-                  connection.execute(sqlSets, [], function(err, resultsSets) {
-                    //if query did not return a result the user query was wrong
-                    //probably not the same number of fields
-                    if (err || resultsSets.rows.length > 0) {
-                      if (err) {
-                        answer(false, 'erreur de vérification: ' + err.message);
-                      } else {
-                        answer(false, 'vérifier select');
-                      }
+
+                  new mssql.Request(mssqlPool).query(sqlSets, (err, resultsSets) => {
+                    if (err) {
+                      answer(false, 'erreur de vérification: ' + err.message);
+                    } else if (resultsSets.recordset.length > 0) {
+                      answer(false, 'vérifier select');
                     } else {
-                      //if the returned result is empty the user's query was certainly correct
-                      //if there is an order by we have to compare lines
                       if (sqlAnswer.toUpperCase().match(/ORDER\s+BY/)) {
                         let a, b;
-                        for (let i = 0; i < resultsAnswer.rows.length; i++) {
-                          for (let j = 0; j < resultsAnswer.rows[i].length; j++) {
-                            a = resultsAnswer.rows[i][j];
-                            b = results.rows[i][j];
-                            if (a.constructor === Date) {
-                              if (a.getTime() !== b.getTime()) {
-                                answer(false, 'vérifier ordre');
-                                return;
-                              }
-                            } else {
-                              if (a !== b) {
-                                answer(false, 'vérifier ordre');
-                                return;
-                              }
-                            }
-                          }
-                        }
+
                       }
                       answer(true, sqlAnswer);
                     }
@@ -700,6 +798,7 @@ function query(req, res) {
       });
     });
   });
+  */
 }
 
 async function getDBList(req, res) {
@@ -716,7 +815,7 @@ async function getDBList(req, res) {
         
         INSERT INTO #temp EXEC sp_msforeachdb 'SELECT * FROM [?].INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE=''BASE TABLE''';
         
-        SELECT TABLE_CATALOG AS OWNER, count(*) AS TABLECOUNT
+        SELECT LOWER(TABLE_CATALOG) AS OWNER, count(*) AS TABLECOUNT
         FROM #temp
         WHERE TABLE_CATALOG NOT IN ('master', 'msdb', 'tempdb')
         GROUP BY TABLE_CATALOG;
@@ -732,59 +831,7 @@ async function getDBList(req, res) {
 
   connection && connection.close();
   res.end();
-
-  // mssqlPool.connect()
-  //   .catch(err => {
-  //     console.log('Error connecting to db:', err);
-  //     res.sendStatus(500);
-  //   })
-  //   .then(connection => {
-  //     return connection.request()
-  //       .query(`
-  //         SELECT name
-  //         FROM master.dbo.sysdatabases
-  //         WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')
-  //         ORDER BY name
-  //       `);
-  //   })
-  //   .then(result => {
-  //     res.write(JSON.stringify(result));
-  //   })
-  //   .catch(err => {
-  //     console.log('Error', err);
-  //     res.sendStatus(500);
-  //   })
-  //   .then(() => res.end());
 }
-
-// function getDBList(req, res) {
-//   oraclePool.getConnection(function(err, connection) {
-//     if (err) {
-//       console.log('Error connecting to db:', err);
-//       res.sendStatus(500); return;
-//     }
-//     connection.execute("SELECT owner, COUNT(*) AS TableCount FROM user_tab_privs WHERE type = 'TABLE' GROUP BY owner ORDER BY owner", [], function(err, results) {
-//       const r = results.rows.map(function(row) {
-//         return { 'OWNER': row[0], 'TABLECOUNT': row[1] };
-//       });
-//       res.write(JSON.stringify(r));
-//       connection.release(function(err) {
-//         if (err) {
-//           console.error(err.message);
-//           Raven.captureException(err);
-//         }
-//       });
-//       connection.release(function(err) {
-//         if (err) {
-//           console.error(err.message);
-//           Raven.captureException(err);
-//         }
-//       });
-//       res.end();
-//     });
-//   });
-// }
-
 
 function exportDBSchema(req, res, dbname) {
   const schema = dbname.replace(/[^a-z_0-9]/gi, '').toUpperCase();
@@ -970,7 +1017,6 @@ function str_replace(search, replace, subject, count) {
   }
   return sa ? s : s[0];
 }
-
 
 function getQuestionByID(id, callback) {
   pgPool.connect(function(err, client, done) {

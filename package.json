@@ -11,6 +11,7 @@
     "cors": "^2.8.4",
     "express": "^4.16.2",
     "mssql": "^4.1.0",
+    "object.reduce": "^1.0.1",
     "passport": "^0.4.0",
     "passport-http": "^0.3.0",
     "pg": "^7.4.0",
