@@ -15,11 +15,10 @@ const passport = require('passport');
 const BasicStrategy = require('passport-http').BasicStrategy;
 const reduce = require('object.reduce');
 
-const ENV = require('./env.test');
+const ENV = require(`./env.${process.env.NODE_ENV||'dev'}`);
 
-const pgConString = "postgres://root:Math3r$0n@localhost/sqlexplorer";
-const pgConAdminString = "postgres://root:Math3r$0n@localhost/sqlexplorer";
-let oraclePool;
+const pgConString = `postgres://${ENV.pgsql.user.username}:${ENV.pgsql.user.password}@${ENV.pgsql.user.host||'localhost'}:${ENV.pgsql.user.port||5432}/${ENV.pgsql.user.database}`;
+const pgConAdminString = `postgres://${ENV.pgsql.admin.username}:${ENV.pgsql.admin.password}@${ENV.pgsql.admin.host||'localhost'}:${ENV.pgsql.admin.port||5432}/${ENV.pgsql.admin.database}`;
 
 const pgPool = new Pool({ connectionString: pgConString });
 const pgAdminPool = new Pool({ connectionString: pgConAdminString });
@@ -496,8 +495,8 @@ app.get('/api/db/:dbname', function(req, res) {
 });
 
 const config = {
-  user: ENV.username,
-  password: ENV.password,
+  user: ENV.mssql.username,
+  password: ENV.mssql.password,
   server: ENV.mssql.server + "\\" + ENV.mssql.instanceName
 };
 
