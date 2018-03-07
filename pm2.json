@@ -1,0 +1,12 @@
+{
+  "apps" : [{
+    "name"        : "sqlexplorer",
+    "script"      : "/var/www/sqlexplorer/current/server.js",
+    "watch"       : false,
+    "env": {
+      "NODE_ENV": "production",
+      "NODENV_VERSION": "8.10.0",
+      "PATH": "/home/sqlexplorer/.nodenv/shims:$PATH"
+    }
+  }]
+}
