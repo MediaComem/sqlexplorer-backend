@@ -497,7 +497,7 @@ app.get('/api/db/:dbname', function(req, res) {
 const config = {
   user: ENV.mssql.username,
   password: ENV.mssql.password,
-  server: ENV.mssql.server + "\\" + ENV.mssql.instanceName
+  server: ENV.mssql.server + (ENV.mssql.instanceName ? "\\" + ENV.mssql.instanceName : "")
 };
 
 const mssqlPool = new mssql.ConnectionPool(config);
