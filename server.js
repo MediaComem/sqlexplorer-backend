@@ -45,7 +45,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.static('public'));
-app.use('/schema_pics', express.static('schema_pics'));
+app.use('/schema_pics', express.static(__dirname + '/schema_pics'));
 app.use(passport.initialize());
 
 
