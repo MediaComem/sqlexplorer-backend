@@ -15,14 +15,18 @@
     "passport": "^0.4.0",
     "passport-http": "^0.3.0",
     "pg": "^7.4.0",
-    "raven": "^2.2.1",
+    "raven": "^2.6.2",
     "tedious-connection-pool": "^1.0.5",
     "tmp": "0.0.33",
     "xmlbuilder": "^9.0.4"
   },
   "scripts": {
+    "start": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Boris Fritscher",
-  "license": ""
+  "license": "",
+  "devDependencies": {
+    "nodemon": "^1.17.5"
+  }
 }

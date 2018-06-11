@@ -2,7 +2,7 @@ exports.mssql = {
   server: '',
   instanceName: '',
   username: '',
-  password: '' // Change it when the user is created on the server
+  password: ''
 };
 
 exports.pgsql = {
@@ -20,4 +20,8 @@ exports.pgsql = {
     host: 'localhost',
     port: 5432
   }
+};
+
+exports.sentry = {
+  dsn: 'sentry-dsn-value'
 };

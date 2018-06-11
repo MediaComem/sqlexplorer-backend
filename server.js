@@ -15,10 +15,10 @@ const passport = require('passport');
 const BasicStrategy = require('passport-http').BasicStrategy;
 const reduce = require('object.reduce');
 
-const ENV = require(`./env.${process.env.NODE_ENV||'dev'}`);
+const ENV = require(`./env.${process.env.NODE_ENV || 'dev'}`);
 
-const pgConString = `postgres://${ENV.pgsql.user.username}:${ENV.pgsql.user.password}@${ENV.pgsql.user.host||'localhost'}:${ENV.pgsql.user.port||5432}/${ENV.pgsql.user.database}`;
-const pgConAdminString = `postgres://${ENV.pgsql.admin.username}:${ENV.pgsql.admin.password}@${ENV.pgsql.admin.host||'localhost'}:${ENV.pgsql.admin.port||5432}/${ENV.pgsql.admin.database}`;
+const pgConString = `postgres://${ENV.pgsql.user.username}:${ENV.pgsql.user.password}@${ENV.pgsql.user.host || 'localhost'}:${ENV.pgsql.user.port || 5432}/${ENV.pgsql.user.database}`;
+const pgConAdminString = `postgres://${ENV.pgsql.admin.username}:${ENV.pgsql.admin.password}@${ENV.pgsql.admin.host || 'localhost'}:${ENV.pgsql.admin.port || 5432}/${ENV.pgsql.admin.database}`;
 
 const pgPool = new Pool({ connectionString: pgConString });
 const pgAdminPool = new Pool({ connectionString: pgConAdminString });
@@ -26,9 +26,7 @@ pgPool.on('error', function(err, client) {
   Raven.captureException(err);
 });
 
-const SENTRY_DSN = '';
-
-Raven.config(SENTRY_DSN).install();
+Raven.config(ENV.sentry.dsn).install();
 app.use(Raven.requestHandler());
 app.use(Raven.errorHandler());
 
@@ -823,14 +821,14 @@ async function getDBList(req, res) {
       .query(`
         SELECT top 0 * INTO #temp
         FROM INFORMATION_SCHEMA.TABLES;
-        
+
         INSERT INTO #temp EXEC sp_msforeachdb 'SELECT * FROM [?].INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE=''BASE TABLE''';
-        
+
         SELECT LOWER(TABLE_CATALOG) AS OWNER, count(*) AS TABLECOUNT
         FROM #temp
         WHERE TABLE_CATALOG NOT IN ('master', 'msdb', 'tempdb')
         GROUP BY TABLE_CATALOG;
-        
+
         DROP TABLE #temp;
       `);
 
