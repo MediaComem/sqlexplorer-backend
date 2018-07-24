@@ -14,31 +14,57 @@ const Raven = require('raven');
 const passport = require('passport');
 const BasicStrategy = require('passport-http').BasicStrategy;
 const reduce = require('object.reduce');
-const logger = require('morgan');
+const ltiRouter = require('./lti/router');
 const path = require('path');
+const logger = require('morgan');
 
-const ENV = require(`./config/env.${process.env.NODE_ENV || 'local'}`);
+const config = require('./config');
 
-const pgConString = `postgres://${ENV.pgsql.user.user}:${ENV.pgsql.user.password}@${ENV.pgsql.user.host || 'localhost'}:${ENV.pgsql.user.port || 5432}/${ENV.pgsql.user.database}`;
-const pgConAdminString = `postgres://${ENV.pgsql.admin.user}:${ENV.pgsql.admin.password}@${ENV.pgsql.admin.host || 'localhost'}:${ENV.pgsql.admin.port || 5432}/${ENV.pgsql.admin.database}`;
+const pgUserConfig = {
+  user: config.pgsql.user.user,
+  password: config.pgsql.user.password,
+  host: config.pgsql.user.host || 'localhost',
+  port: config.pgsql.user.port || 5432,
+  database: config.pgsql.user.database
+}
 
-console.log(`pgConString = ${pgConString}`);
-console.log(`pgConAdminString = ${pgConAdminString}`);
+const pgAdminConfig = {
+  user: config.pgsql.admin.user,
+  password: config.pgsql.admin.password,
+  host: config.pgsql.admin.host || 'localhost',
+  port: config.pgsql.admin.port || 5432,
+  database: config.pgsql.admin.database
+}
 
-const pgPool = new Pool({ connectionString: pgConString });
-const pgAdminPool = new Pool({ connectionString: pgConAdminString });
-pgPool.on('error', function(err, client) {
-  Raven.captureException(err);
-});
+const pgConString = `postgres://${config.pgsql.user.user}:${config.pgsql.user.password}@${config.pgsql.user.host || 'localhost'}:${config.pgsql.user.port || 5432}/${config.pgsql.user.database}`;
+const pgConAdminString = `postgres://${config.pgsql.admin.user}:${config.pgsql.admin.password}@${config.pgsql.admin.host || 'localhost'}:${config.pgsql.admin.port || 5432}/${config.pgsql.admin.database}`;
 
-Raven.config(ENV.sentry.dsn).install();
+const pgPool = new Pool(pgUserConfig);
+// const pgPool = new Pool({ connectionString: pgConString });
+const pgAdminPool = new Pool(pgAdminConfig);
+// const pgAdminPool = new Pool({ connectionString: pgConAdminString });
+
+Raven.config(config.sentry.dsn).install();
+
+// Express settings
+
+// Mandatory so that Express can access the initial request data instead of only the proxy request data.
+app.enable('trust proxy');
+// Used when generating template for LTI Item Selection Requests.
+app.set('view engine', 'pug');
+// Fix a bug where Express was not searching the templates in the correct directory.
+app.set('views', path.join(__dirname, '/views'));
+
 app.use(Raven.requestHandler());
 app.use(Raven.errorHandler());
-
 app.use(logger('dev'));
+
+pgPool.on('error', err => Raven.captureException(err));
+pgAdminPool.on('error', err => Raven.captureException(err));
+
 passport.use(new BasicStrategy(
   function(username, password, done) {
-    if (username === 'admin' && password === 'pwd') {
+    if (username === 'admin' && password === config.app.adminPassword) {
       done(null, true);
     } else {
       done(null, false);
@@ -51,13 +77,15 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.static(path.join(__dirname, '/public')));
-app.use('/schema_pics', express.static(path.join(__dirname + '/schema_pics')));
+app.use('/schema_pics', express.static(path.join(__dirname, '/schema_pics')));
+app.use('/assets', express.static(path.join(__dirname, '/views/assets')));
 app.use(passport.initialize());
-
 
 const jsonParser = bodyParser.json();
 const txtParser = bodyParser.text();
 const urlencodedParser = bodyParser.urlencoded({ extended: false });
+
+app.use('/lti', ltiRouter);
 
 app.post('/api/evaluate', jsonParser, function(req, res) {
   console.log(req.body);
@@ -119,7 +147,8 @@ app.get('/api/question/:id',
           done();
         });
     });
-  });
+  }
+);
 
 app.post('/api/question', jsonParser,
   passport.authenticate('basic', { session: false }),
@@ -127,37 +156,7 @@ app.post('/api/question', jsonParser,
     if (!req.body) return res.sendStatus(400);
     console.log(req.body);
     upsertQuestion(req, res);
-  });
-
-app.get('/api/scorm/:id',
-  passport.authenticate('basic', { session: false }),
-  function(req, res) {
-    if (isNaN(req.params.id)) {
-      createScorm(req, res, [{ id: req.params.id }]);
-    } else {
-      pgPool.connect(function(err, client, done) {
-        if (err) {
-          console.error('error fetching client from pool', err);
-          Raven.captureException(err);
-          return;
         }
-        client.query('SELECT question_id AS id FROM assignment_questions WHERE assignment_id = $1 ORDER BY aq_order ASC',
-          [req.params.id], function(err, result) {
-            if (err) {
-              console.error('error running query', err);
-              Raven.captureException(err);
-              res.sendStatus(500);
-            }
-            if (result.rows.length > 0) {
-              createScorm(req, res, result.rows);
-            } else {
-              res.sendStatus(404);
-            }
-            done();
-          });
-      });
-    }
-  }
 );
 
 app.get('/api/logs',
@@ -233,41 +232,6 @@ app.get('/api/logs/:user_id',
     });
   }
 );
-
-function createScorm(req, res, rows) {
-  const scormName = 'SQL|Explorer';
-  const xml = xmlBuilder.create('manifest', { version: '1.0', encoding: 'UTF-8' });
-  xml.att('identifier', scormName);
-  xml.att('version', '1.2');
-  xml.att('xmlns', 'http://www.imsproject.org/xsd/imscp_rootv1p1p2');
-  xml.att('xmlns:adlcp', 'http://www.adlnet.org/xsd/adlcp_rootv1p2');
-  xml.att('xmlns:imsmd', 'http://www.imsglobal.org/xsd/imsmd_rootv1p2p1');
-  xml.att('xmlns:xsi', 'http://www.w3.org/2001/XMLSchema-instance');
-  xml.att('xsi:schemaLocation', 'http://www.imsproject.org/xsd/imscp_rootv1p1p2 imscp_rootv1p1p2.xsd http://www.imsglobal.org/xsd/imsmd_rootv1p2p1 imsmd_rootv1p2p1.xsd http://www.adlnet.org/xsd/adlcp_rootv1p2 adlcp_rootv1p2.xsd');
-  const org = xml.ele('organizations', { default: 'sqlexplorer' })
-    .ele('organization', { identifier: 'sqlexplorer', structure: 'hierarchical' });
-  org.ele('title', {}, scormName);
-
-  rows.forEach(function(row, idx) {
-    const i = idx + 1;
-    const item = org.ele('item', { identifier: 'ITEM-' + i, identifierref: 'sco_target', isvisible: 'true', parameters: 'id=' + row.id });
-    item.ele('title', {}, 'Question ' + i);
-    item.ele('adlcp:masteryscore', {}, '1');
-  });
-  xml.ele('resources')
-    .ele('resource', { identifier: 'sco_target', 'adlcp:scormtype': 'sco', href: 'index.html', type: 'webcontent' })
-    .ele('file', { href: 'index.html' });
-
-  const zip = new AdmZip();
-  zip.addLocalFile('scorm/adlcp_rootv1p2.xsd');
-  zip.addLocalFile('scorm/ims_xml.xsd');
-  zip.addLocalFile('scorm/imscp_rootv1p1p2.xsd');
-  zip.addLocalFile('scorm/imsmd_rootv1p2p1.xsd');
-  zip.addLocalFile('public/index.html');
-  zip.addFile('imsmanifest.xml', new Buffer(xml.end({ pretty: true })));
-  res.write(zip.toBuffer());
-  res.end();
-}
 
 app.get('/api/tags',
   passport.authenticate('basic', { session: false }),
@@ -385,6 +349,7 @@ app.post('/api/assignment', jsonParser,
     pgAdminPool.connect(function(err, client, done) {
       if (err) {
         console.error('error fetching client from pool', err);
+        Raven.captureException(err);
         res.sendStatus(500);
         return;
       }
@@ -392,6 +357,7 @@ app.post('/api/assignment', jsonParser,
         [req.body.name, req.body.year, req.body.course], function(err, result) {
           if (err) {
             console.error('error running query', err);
+            Raven.captureException(err);
             res.sendStatus(500);
             return;
           }
@@ -411,8 +377,7 @@ app.post('/api/assignment/:assignmentId/question', jsonParser,
       if (err) {
         console.error('error fetching client from pool', err);
         Raven.captureException(err);
-        res.sendStatus(500);
-        return;
+        return res.sendStatus(500);
       }
       client.query('INSERT INTO assignment_questions (assignment_id, question_id, aq_order) VALUES ($1, $2, (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = $1))',
         [req.params.assignmentId, req.body.questionId], function(err, result) {
@@ -438,7 +403,7 @@ app.post('/api/questions', jsonParser,
       if (err) {
         console.error('error fetching client from pool', err);
         Raven.captureException(err);
-        return;
+        return res.sendStatus(500);
       }
       const keywords = req.body.keywords || [];
       const dbname = (req.body.dbname || 'ALL').toUpperCase();
@@ -476,7 +441,7 @@ app.post('/api/questions', jsonParser,
           if (err) {
             console.error('error running query', err);
             Raven.captureException(err);
-            res.sendStatus(500);
+            return res.sendStatus(500);
           }
           if (result.rows) {
             res.send(JSON.stringify(result.rows));
@@ -498,13 +463,11 @@ app.get('/api/db/:dbname', function(req, res) {
   exportDBSchema(req, res, req.params.dbname);
 });
 
-const config = {
-  user: ENV.mssql.username,
-  password: ENV.mssql.password,
-  server: ENV.mssql.server + (ENV.mssql.instanceName ? "\\" + ENV.mssql.instanceName : "")
-};
-
-const mssqlPool = new mssql.ConnectionPool(config);
+const mssqlPool = new mssql.ConnectionPool({
+  user: config.mssql.username,
+  password: config.mssql.password,
+  server: config.mssql.server + (config.mssql.instanceName ? "\\" + config.mssql.instanceName : "")
+});
 
 // Patch for https://github.com/patriksimek/node-mssql/issues/467
 // Provided by Pierre-Élie Fauché (https://github.com/pierre-elie)
@@ -542,6 +505,7 @@ function query(req, res) {
     if (err) {
       console.log(err instanceof mssql.ConnectionError);
       console.log('Error connecting to db:', err);
+      Raven.captureException(err);
       return res.sendStatus(500);
     }
     const transaction = new mssql.Transaction(mssqlPool);
@@ -549,12 +513,14 @@ function query(req, res) {
       if (err) {
         console.log('Error connecting to db:', err);
         mssqlPool.close();
+        Raven.captureException(err);
         return res.sendStatus(500);
       }
       transaction.request().query(`USE ${schema};`, (err, result) => {
         if (err) {
           console.log('Error executing query:', err);
           mssqlPool.close();
+          Raven.captureException(err);
           return res.sendStatus(500);
         }
 
@@ -634,6 +600,7 @@ function query(req, res) {
                   if (err) {
                     console.log('Error executing query sqlAnswer:', err);
                     transaction.rollback().then(() => { mssqlPool.close(); });
+                    Raven.captureException(err);
                     return res.sendStatus(500);
                   }
                   if (result.recordset.length === resultAnswer.recordset.length) {
@@ -690,130 +657,6 @@ function query(req, res) {
       });
     });
   });
-  /*
-  mssqlPool.connect(function(err) {
-    new mssql.Request(mssqlPool).query(`USE ${schema};`, (err, result) => {
-      if (err) {
-        console.log('Error executing query:', err);
-        return res.sendStatus(500);
-      }
-
-      if (!req.body.sql) {
-        return res.sendStatus(404);
-      }
-
-      const sqlToTest = req.body.sql.replace(/;/g, '');
-
-      new mssql.Request(mssqlPool).query(sqlToTest, (err, result) => {
-        const data = {
-          headers: [],
-          content: [],
-          numrows: 0
-        };
-
-        function answer(correct, msg) {
-          const log = {
-            activity: schema,
-            question_id: undefined,
-            query: req.body.sql,
-            error: undefined,
-            user_id: undefined,
-            user_name: undefined,
-            ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress
-          };
-
-          if (typeof (correct) !== 'undefined') {
-            data.correct = correct;
-            log.correct = correct;
-          }
-          if (data.correct) {
-            data.answer = msg;
-          } else {
-            if (typeof (msg) !== 'undefined') {
-              data.error = msg;
-              log.error = msg;
-            }
-          }
-          if (req.body.id) {
-            log.question_id = req.body.id;
-          }
-          if (req.body.user_id) {
-            log.user_id = req.body.user_id;
-          }
-          if (req.body.user_name) {
-            log.user_name = req.body.user_name;
-          }
-
-          logAnswer(log);
-
-          res.write(JSON.stringify(data));
-          mssqlPool.close();
-          res.end();
-        }
-
-        if (err) {
-          res.write(JSON.stringify({ error: err.toString() }));
-          mssqlPool.close();
-          res.end();
-        } else {
-          if (result.recordset.length > 0) {
-            reduce(result.recordset.columns, (acc, value) => {
-              acc.push(value.name);
-              return acc;
-            }, data.headers);
-            data.content = result.recordset.slice(0, 1000).map(function(row) {
-              reduce(row, (acc, value, key) => {
-                if (value === null) row[key] = '(NULL)';
-              });
-              return row;
-            });
-            data.numrows = result.recordset.length;
-          }
-
-          if (req.body.id) {
-            getQuestionByID(req.body.id, question => {
-              const sqlAnswer = question.sql;
-              new mssql.Request(mssqlPool).query(sqlAnswer.replace(/;/g, ''), (err, resultAnswer) => {
-                if (err) {
-                  console.log('Error executing query sqlAnswer:', err);
-                  mssqlPool.close();
-                  res.sendStatus(500);
-                  return;
-                }
-
-                if (results.recordset.length === resultAnswer.recordset.length) {
-                  const sqlSets = `
-                    (SELECT * FROM (${sqlAnswer.replace(/;/g, '')}) MINUS SELECT * FROM (${sqlToTest}))
-                    UNION
-                    (SELECT * FROM (${sqlToTest}) MINUS SELECT * FROM (${sqlAnswer.replace(/;/g, '')}))
-                  `;
-
-                  new mssql.Request(mssqlPool).query(sqlSets, (err, resultsSets) => {
-                    if (err) {
-                      answer(false, 'erreur de vérification: ' + err.message);
-                    } else if (resultsSets.recordset.length > 0) {
-                      answer(false, 'vérifier select');
-                    } else {
-                      if (sqlAnswer.toUpperCase().match(/ORDER\s+BY/)) {
-                        let a, b;
-
-                      }
-                      answer(true, sqlAnswer);
-                    }
-                  });
-                } else {
-                  answer(false, 'vérifier conditions et schéma');
-                }
-              });
-            });
-          } else {
-            answer();
-          }
-        }
-      });
-    });
-  });
-  */
 }
 
 async function getDBList(req, res) {
@@ -841,196 +684,12 @@ async function getDBList(req, res) {
     res.write(JSON.stringify(result.recordset));
   } catch (err) {
     console.log('Error', err);
+      Raven.captureException(err);
     res.sendStatus(500);
   }
 
   connection && connection.close();
   res.end();
-}
-
-function exportDBSchema(req, res, dbname) {
-  const schema = dbname.replace(/[^a-z_0-9]/gi, '').toUpperCase();
-  oraclePool.getConnection(function(err, connection) {
-    if (err) { console.log('Error connecting to db:', err); res.sendStatus(500); return; }
-    connection.execute('ALTER SESSION SET CURRENT_SCHEMA="' + schema + '"', [], function(err, results) {
-      if (err) { console.log('Error executing query:', err); res.sendStatus(500); return; }
-
-      let tableColumnsAndFksSQL = `
-        SELECT acol.table_name, acol.column_name, acol.data_type, acol.data_length, acol.data_precision, acol.data_scale, acol.nullable, fk.constraint_name, fk.r_owner, fk.r_constraint_name, fk.r_table_name, fk.r_column_name
-        FROM all_tab_cols acol
-        LEFT JOIN (
-          SELECT col.owner, col.table_name, col.column_name, col.constraint_name,  cons.R_OWNER, cons.R_CONSTRAINT_NAME, rcol.table_name r_table_name, rcol.column_name r_column_name
-          FROM all_cons_columns col, all_constraints cons, all_cons_columns rcol
-          WHERE col.table_name = cons.table_name
-          AND col.constraint_name = cons.constraint_name
-          AND cons.constraint_type = 'R'
-          AND rcol.owner = cons.r_owner
-          AND rcol.constraint_name = cons.r_constraint_name
-          AND rcol.position = col.position
-        ) fk ON fk.table_name = acol.table_name AND fk.column_name = acol.column_name
-        AND fk.owner = acol.owner
-        WHERE acol.owner = '`;
-      tableColumnsAndFksSQL += schema;
-      tableColumnsAndFksSQL += "' ORDER BY acol.table_name, acol.column_id";
-      connection.execute(tableColumnsAndFksSQL, [], function(err, tableColumnsAndFks) {
-        if (err) { console.log('Error fetchings data:', err); res.sendStatus(500); return; }
-        let primaryKeysSQL = `
-          SELECT col.table_name, col.column_name, col.constraint_name
-          FROM all_cons_columns col, all_constraints cons
-          WHERE col.table_name = cons.table_name
-          AND col.constraint_name = cons.constraint_name
-          AND cons.constraint_type = 'P'
-          AND col.owner = '`;
-        primaryKeysSQL += schema + "'";
-
-        tableColumnsAndFks = tableColumnsAndFks.rows;
-        /*
-        table_name 0
-        column_name 1
-        data_type 2
-        data_length 3
-        data_precision 4
-        data_scale 5
-        nullable 6
-        constraint_name 7
-        r_owner 8
-        r_constraint_name 9
-        r_table_name 10
-        r_column_name 11
-        */
-        connection.execute(primaryKeysSQL, [], function(err, primaryKeys) {
-          if (err) { console.log('Error fetchings data:', err); res.sendStatus(500); return; }
-          const xml = xmlBuilder.create('sql');
-          //datatypes
-          //tables
-          let lastTable = '';
-          for (let t = 0; t < tableColumnsAndFks.length; t++) {
-            const table = tableColumnsAndFks[t][0];
-            let tableNode;
-            if (lastTable != table) {
-              //write table
-              tableNode = xml.ele('table', { name: camelCase(table) });
-            }
-            const rowNode = tableNode.ele('row', {
-              name: camelCase(tableColumnsAndFks[t][1]),
-              null: tableColumnsAndFks[t][6] === 'Y' ? 1 : 0
-            });
-            rowNode.ele('datatype', {}, tableColumnsAndFks[t][2]);
-            if (tableColumnsAndFks[t][10] && tableColumnsAndFks[t][11]) {
-              rowNode.ele('relation', {
-                table: camelCase(tableColumnsAndFks[t][10]),
-                row: camelCase(tableColumnsAndFks[t][11])
-              });
-            }
-
-            //Pkeys
-            if (lastTable != table || t === tableColumnsAndFks.length) {
-              const parts = primaryKeys.rows.filter(function(elem) {
-                return elem[0] === table;
-              });
-              /*
-                table_name, column_name, constraint_name
-              */
-              if (parts.length > 0) {
-                const pkeyNode = tableNode.ele('key', { name: parts[0][2], type: 'PRIMARY' });
-                parts.forEach(function(elem) {
-                  pkeyNode.ele('part', {}, camelCase(elem[1]));
-                });
-              }
-            }
-            lastTable = table;
-            //index
-          }
-          res.write(xml.end({ pretty: true }));
-          connection.release(function(err) {
-            if (err) {
-              console.error(err.message);
-              Raven.captureException(err);
-            }
-          });
-          res.end();
-        });
-      });
-    });
-  });
-}
-
-function camelCase(word) {
-  const tableNames = [];
-  const customKeywords = ["prix", "date", "quantite", "limite", "dossier", "chassis", "publicitaire",
-    "article", "principal", "heure", "dossard", "annee", "horaire", "specialiste", "medecin", "generaliste",
-    "places", "ordre", "federation", "standard", "reparation", "stock", "volume", "unite", "mesure",
-    "piece", "plaque", "appel", "temps", "travaux", "rechange"];
-  const keywords = customKeywords.concat(tableNames);
-  //arsort($keywords);
-  ucKeywords = [];
-  keywords.forEach(function(capitalizeMe) {
-    ucKeywords.push(capitalizeMe.charAt(0).toUpperCase() + capitalizeMe.substring(1).toLowerCase());
-  });
-
-  const missingkey = str_replace(keywords, '', word);
-  if (missingkey != 'tbl') {
-    keywords.push(missingkey);
-    ucKeywords.push(missingkey.charAt(0).toUpperCase() + missingkey.substring(1).toLowerCase());
-  }
-  return str_replace(keywords, ucKeywords, word);
-}
-
-function str_replace(search, replace, subject, count) {
-  //  discuss at: http://phpjs.org/functions/str_replace/
-  // original by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
-  // improved by: Gabriel Paderni
-  // improved by: Philip Peterson
-  // improved by: Simon Willison (http://simonwillison.net)
-  // improved by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
-  // improved by: Onno Marsman
-  // improved by: Brett Zamir (http://brett-zamir.me)
-  //  revised by: Jonas Raoni Soares Silva (http://www.jsfromhell.com)
-  // bugfixed by: Anton Ongson
-  // bugfixed by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
-  // bugfixed by: Oleg Eremeev
-  //    input by: Onno Marsman
-  //    input by: Brett Zamir (http://brett-zamir.me)
-  //    input by: Oleg Eremeev
-  //        note: The count parameter must be passed as a string in order
-  //        note: to find a global constiable in which the result will be given
-  //   example 1: str_replace(' ', '.', 'Kevin van Zonneveld');
-  //   returns 1: 'Kevin.van.Zonneveld'
-  //   example 2: str_replace(['{name}', 'l'], ['hello', 'm'], '{name}, lars');
-  //   returns 2: 'hemmo, mars'
-
-  let i = 0,
-    j = 0,
-    temp = '',
-    repl = '',
-    sl = 0,
-    fl = 0,
-    f = [].concat(search),
-    r = [].concat(replace),
-    s = subject,
-    ra = Object.prototype.toString.call(r) === '[object Array]',
-    sa = Object.prototype.toString.call(s) === '[object Array]';
-  s = [].concat(s);
-  if (count) {
-    this.window[count] = 0;
-  }
-
-  for (i = 0, sl = s.length; i < sl; i++) {
-    if (s[i] === '') {
-      continue;
-    }
-    for (j = 0, fl = f.length; j < fl; j++) {
-      temp = s[i] + '';
-      repl = ra ? (r[j] !== undefined ? r[j] : '') : r[0];
-      s[i] = (temp)
-        .split(f[j])
-        .join(repl);
-      if (count && s[i] !== temp) {
-        this.window[count] += (temp.length - s[i].length) / f[j].length;
-      }
-    }
-  }
-  return sa ? s : s[0];
 }
 
 function getQuestionByID(id, callback) {
@@ -1117,4 +776,4 @@ function upsertQuestion(req, res) {
   });
 }
 
-app.listen(ENV.app.port, () => console.log(`[${new Date().toString()}] Example app listening on port ${ENV.app.port}!`));
+app.listen(config.app.port, () => console.log(`[${new Date().toString()}] Example app listening on port ${config.app.port}!`));

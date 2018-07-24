@@ -1,0 +1,128 @@
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+#buttons {
+  height: 50px;
+  min-height: 50px;
+  background-color: gainsboro;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-basis: auto;
+}
+
+button {
+  background-color: white;
+  border: 1px solid #006AC3;
+  color: rgb(0, 106, 195);
+  padding: 8px;
+  cursor: pointer;
+  outline: 0;
+}
+
+button:not([disable="true"]):hover {
+  background-color: rgb(240, 238, 238);
+}
+
+button[disable="true"] {
+  color: rgba(0, 106, 195, 0.5);
+  border-color: rgba(0, 106, 195, 0.5);
+  cursor: default;
+}
+
+#app > h1, #app > form, #app > div  {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+h1 {
+  padding: 8px 16px 16px 16px;
+  background-color: #006AC3;
+  color: white;
+  font-size: 1.6em;
+  box-shadow: 0px 0px 16px 8px rgba(0, 0, 0, 0.1);
+}
+
+h2 {
+  margin-top: 48px;
+  margin-bottom: 32px;
+}
+
+h3 {
+  margin-top: 32px;
+  margin-bottom: 16px;
+}
+
+form {
+  padding-bottom: 32px;
+  height: 100%;
+  overflow: auto;
+}
+
+#exercises p {
+  box-shadow: 0px 2px 4px 1px rgba(0, 0, 0, 0.1);
+  margin-bottom: 8px;
+  padding: 16px;
+  cursor: pointer;
+  display: flex;
+  border-left: 5px solid transparent;
+}
+
+#exercises p:not(.active):hover {
+  border-left: 5px solid rgba(0, 106, 195, 0.5)
+}
+
+#exercises p * {
+  cursor: inherit;
+  pointer-events: none;
+}
+
+#exercises p label {
+  display: flex;
+  justify-content: space-between;
+  flex-grow: 1;
+}
+
+#exercises p input[type="radio"] {
+  display: none
+}
+
+#exercises p.active {
+  border-left: 5px solid #006ac3;
+  background-color: rgba(0, 0, 255, 0.1);
+}
+
+#error {
+  flex-grow: 1;
+  padding: 8px;
+  color: red;
+  border: 1px solid rgba(255, 0, 0, 0.5);
+  margin-right: 8px;
+  background-color: white;
+}
+
+.year {
+  border: 1px solid lightgrey;
+  padding: 2px 5px;
+  font-size: 13px;
+  color: grey;
+  border-radius: 4px;
+  margin-left: 16px;
+}
+
+input[type="date"], input[type="time"] {
+  border: 1px solid lightgray;
+  padding: 8px;
+  border-radius: 3px;
+}
+
+input[type="date"] {
+  margin-right: 16px;
+}
+
+.small {
+  font-size: 0.8rem;
+}

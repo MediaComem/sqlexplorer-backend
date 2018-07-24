@@ -1,0 +1,8 @@
+doctype html
+body
+  form(action=`${returnUrl}` method="post" name="itemSelectedForm" encType="application/x-www-form-urlencoded")
+    each value, name in params
+      input(type="hidden" name=`${name}` value=`${value}`)
+    button(type="submit") Terminer
+  script.
+    (() => document.itemSelectedForm.submit())();
