@@ -1,12 +1,16 @@
 {
-  "apps" : [{
-    "name"        : "sqlexplorer",
-    "script"      : "/var/www/sqlexplorer/current/server.js",
-    "watch"       : false,
-    "env": {
-      "NODE_ENV": "production",
-      "NODENV_VERSION": "8.10.0",
-      "PATH": "/home/sqlexplorer/.nodenv/shims:/usr/local/bin:/usr/bin:/bin"
+  "apps": [
+    {
+      "name": "sqlexplorer",
+      "script": "/var/www/sqlexplorer/current/server.js",
+      "watch": false,
+      "env": {
+        "NODE_ENV": "production",
+        "NODENV_VERSION": "8.10.0",
+        "PATH": "/home/sqlexplorer/.nodenv/shims:/usr/local/bin:/usr/bin:/bin"
+      },
+      "restart_delay": 10000,
+      "max_restarts": 500
     }
-  }]
+  ]
 }
