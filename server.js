@@ -15,7 +15,8 @@ const passport = require('passport');
 const BasicStrategy = require('passport-http').BasicStrategy;
 const reduce = require('object.reduce');
 
-const ENV = require(`./env.${process.env.NODE_ENV || 'dev'}`);
+const ENV = require(`./config/env.${process.env.NODE_ENV || 'local'}`);
+console.log(ENV);
 
 const pgConString = `postgres://${ENV.pgsql.user.username}:${ENV.pgsql.user.password}@${ENV.pgsql.user.host || 'localhost'}:${ENV.pgsql.user.port || 5432}/${ENV.pgsql.user.database}`;
 const pgConAdminString = `postgres://${ENV.pgsql.admin.username}:${ENV.pgsql.admin.password}@${ENV.pgsql.admin.host || 'localhost'}:${ENV.pgsql.admin.port || 5432}/${ENV.pgsql.admin.database}`;
@@ -1111,4 +1112,4 @@ function upsertQuestion(req, res) {
   });
 }
 
-app.listen(3000, () => console.log('Example app listening on port 3000!'));
+app.listen(ENV.app.port, () => console.log(`Example app listening on port ${ENV.app.port}!`));

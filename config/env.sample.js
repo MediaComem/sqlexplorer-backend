@@ -23,5 +23,8 @@ module.exports = {
   },
   sentry: {
     dsn: 'sentry-dsn-value'
+  },
+  session: {
+    secret: 'your-session-secret'
   }
 };
