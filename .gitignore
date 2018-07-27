@@ -2,7 +2,7 @@ node_modules
 public
 .vscode
 bower_components
-/schema_pics/*
+schema_pics/
 queryOld.js
 env.*
 !env.sample.js
