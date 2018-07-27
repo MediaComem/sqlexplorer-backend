@@ -14,6 +14,7 @@ const Raven = require('raven');
 const passport = require('passport');
 const BasicStrategy = require('passport-http').BasicStrategy;
 const reduce = require('object.reduce');
+const logger = require('morgan');
 
 const ENV = require(`./config/env.${process.env.NODE_ENV || 'local'}`);
 console.log(ENV);
@@ -28,6 +29,7 @@ pgPool.on('error', function(err, client) {
 });
 
 Raven.config(ENV.sentry.dsn).install();
+app.use(logger('dev'));
 app.use(Raven.requestHandler());
 app.use(Raven.errorHandler());
 
@@ -1112,4 +1114,4 @@ function upsertQuestion(req, res) {
   });
 }
 
-app.listen(ENV.app.port, () => console.log(`Example app listening on port ${ENV.app.port}!`));
+app.listen(ENV.app.port, () => console.log(`[${new Date().toString()}] Example app listening on port ${ENV.app.port}!`));
