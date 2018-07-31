@@ -15,6 +15,7 @@ const passport = require('passport');
 const BasicStrategy = require('passport-http').BasicStrategy;
 const reduce = require('object.reduce');
 const logger = require('morgan');
+const path = require('path');
 
 const ENV = require(`./config/env.${process.env.NODE_ENV || 'local'}`);
 console.log(ENV);
@@ -29,10 +30,10 @@ pgPool.on('error', function(err, client) {
 });
 
 Raven.config(ENV.sentry.dsn).install();
-app.use(logger('dev'));
 app.use(Raven.requestHandler());
 app.use(Raven.errorHandler());
 
+app.use(logger('dev'));
 passport.use(new BasicStrategy(
   function(username, password, done) {
     if (username === 'admin' && password === 'pwd') {
@@ -47,8 +48,8 @@ app.use(cors({
   origin: true, //  reflect the request origin, as defined by req.header('Origin')
   credentials: true
 }));
-app.use(express.static('public'));
-app.use('/schema_pics', express.static(__dirname + '/schema_pics'));
+app.use(express.static(path.join(__dirname, '/public')));
+app.use('/schema_pics', express.static(path.join(__dirname + '/schema_pics')));
 app.use(passport.initialize());
 
 

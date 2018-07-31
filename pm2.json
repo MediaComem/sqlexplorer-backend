@@ -3,6 +3,7 @@
     {
       "name": "sqlexplorer",
       "script": "/var/www/sqlexplorer/current/server.js",
+      "cwd": "/var/www/sqlexplorer/current",
       "watch": false,
       "env": {
         "NODE_ENV": "production",
