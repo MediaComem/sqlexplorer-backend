@@ -18,10 +18,12 @@ const logger = require('morgan');
 const path = require('path');
 
 const ENV = require(`./config/env.${process.env.NODE_ENV || 'local'}`);
-console.log(ENV);
 
-const pgConString = `postgres://${ENV.pgsql.user.username}:${ENV.pgsql.user.password}@${ENV.pgsql.user.host || 'localhost'}:${ENV.pgsql.user.port || 5432}/${ENV.pgsql.user.database}`;
-const pgConAdminString = `postgres://${ENV.pgsql.admin.username}:${ENV.pgsql.admin.password}@${ENV.pgsql.admin.host || 'localhost'}:${ENV.pgsql.admin.port || 5432}/${ENV.pgsql.admin.database}`;
+const pgConString = `postgres://${ENV.pgsql.user.user}:${ENV.pgsql.user.password}@${ENV.pgsql.user.host || 'localhost'}:${ENV.pgsql.user.port || 5432}/${ENV.pgsql.user.database}`;
+const pgConAdminString = `postgres://${ENV.pgsql.admin.user}:${ENV.pgsql.admin.password}@${ENV.pgsql.admin.host || 'localhost'}:${ENV.pgsql.admin.port || 5432}/${ENV.pgsql.admin.database}`;
+
+console.log(`pgConString = ${pgConString}`);
+console.log(`pgConAdminString = ${pgConAdminString}`);
 
 const pgPool = new Pool({ connectionString: pgConString });
 const pgAdminPool = new Pool({ connectionString: pgConAdminString });
