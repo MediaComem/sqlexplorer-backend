@@ -17,7 +17,7 @@ const reduce = require('object.reduce');
 const ltiRouter = require('./lti/router');
 const path = require('path');
 const logger = require('morgan');
-
+const { transform } = require('lodash');
 const config = require('./config');
 
 const pgUserConfig = {
@@ -105,14 +105,14 @@ app.get('/api/questiontext/:id', function(req, res) {
       return;
     }
     client.query('SELECT * FROM question_schemas WHERE id = $1',
-      [req.params.id], function(err, result) {
+      [ req.params.id ], function(err, result) {
         if (err) {
           console.error('error running query', err);
           Raven.captureException(err);
           res.sendStatus(500);
         }
         if (result.rows.length > 0) {
-          res.send(JSON.stringify(result.rows[0]));
+          res.send(JSON.stringify(result.rows[ 0 ]));
         } else {
           res.sendStatus(404);
         }
@@ -132,14 +132,14 @@ app.get('/api/question/:id',
         return;
       }
       client.query('SELECT q.*, qv.schema FROM questions q JOIN question_schemas qv ON qv.id = q.id  WHERE q.id = $1',
-        [req.params.id], function(err, result) {
+        [ req.params.id ], function(err, result) {
           if (err) {
             console.error('error running query', err);
             Raven.captureException(err);
             res.sendStatus(500);
           }
           if (result.rows.length > 0) {
-            res.write(JSON.stringify(result.rows[0]));
+            res.write(JSON.stringify(result.rows[ 0 ]));
           } else {
             res.sendStatus(404);
           }
@@ -156,7 +156,7 @@ app.post('/api/question', jsonParser,
     if (!req.body) return res.sendStatus(400);
     console.log(req.body);
     upsertQuestion(req, res);
-        }
+  }
 );
 
 app.get('/api/logs',
@@ -189,7 +189,7 @@ app.get('/api/logs',
             res.sendStatus(500);
           }
           if (result.rows.length > 0) {
-            res.write(JSON.stringify(result.rows[0].json));
+            res.write(JSON.stringify(result.rows[ 0 ].json));
             res.end();
           } else {
             res.sendStatus(404);
@@ -215,7 +215,7 @@ app.get('/api/logs/:user_id',
         WHERE user_id LIKE $1 || \'%\'
         GROUP BY activity, question_id
         ORDER BY activity, question_id`,
-        [req.params.user_id], function(err, result) {
+        [ req.params.user_id ], function(err, result) {
           if (err) {
             console.error('error running query', err);
             Raven.captureException(err);
@@ -319,7 +319,7 @@ function getAssignmentQuestions(id, callback) {
       return;
     }
     client.query("SELECT * FROM assignment_questions aq JOIN questions q ON q.id = question_id WHERE aq.assignment_id = $1 ORDER BY aq.aq_order",
-      [id],
+      [ id ],
       function(err, result) {
         callback(err, result);
         done();
@@ -335,7 +335,7 @@ function getAssignementById(id, callback) {
       return;
     }
     client.query("SELECT * FROM assignments WHERE id = $1",
-      [id],
+      [ id ],
       function(err, result) {
         callback(err, result);
         done();
@@ -354,7 +354,7 @@ app.post('/api/assignment', jsonParser,
         return;
       }
       client.query('INSERT INTO assignments (name, year, course) VALUES ($1, $2, $3) RETURNING id',
-        [req.body.name, req.body.year, req.body.course], function(err, result) {
+        [ req.body.name, req.body.year, req.body.course ], function(err, result) {
           if (err) {
             console.error('error running query', err);
             Raven.captureException(err);
@@ -362,7 +362,7 @@ app.post('/api/assignment', jsonParser,
             return;
           }
           if (result.rows.length > 0) {
-            res.send(JSON.stringify(result.rows[0]));
+            res.send(JSON.stringify(result.rows[ 0 ]));
           }
           done();
         });
@@ -380,7 +380,7 @@ app.post('/api/assignment/:assignmentId/question', jsonParser,
         return res.sendStatus(500);
       }
       client.query('INSERT INTO assignment_questions (assignment_id, question_id, aq_order) VALUES ($1, $2, (SELECT COUNT(*) FROM assignment_questions WHERE assignment_id = $1))',
-        [req.params.assignmentId, req.body.questionId], function(err, result) {
+        [ req.params.assignmentId, req.body.questionId ], function(err, result) {
           if (err) {
             console.error('error running query', err);
             Raven.captureException(err);
@@ -488,9 +488,9 @@ app.get('/api/pdf/:id', function(req, res) {
     getAssignmentQuestions(req.params.id, function(err, result) {
       tmp.tmpName(function _tempNameGenerated(err, path) {
         if (err) throw err;
-        exec('php sql_to_pdf.php ' + path + ' "' + assignment.rows[0].name + '" "' + JSON.stringify(result.rows).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"', { cwd: 'sql_to_pdf' }, function(error, stdout, stderr) {
+        exec('php sql_to_pdf.php ' + path + ' "' + assignment.rows[ 0 ].name + '" "' + JSON.stringify(result.rows).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"', { cwd: 'sql_to_pdf' }, function(error, stdout, stderr) {
           res.setHeader('Content-type', 'application/pdf');
-          res.setHeader('Content-disposition', 'attachment; filename=' + assignment.rows[0].name + '.pdf');
+          res.setHeader('Content-disposition', 'attachment; filename=' + assignment.rows[ 0 ].name + '.pdf');
           res.sendFile(path);
         });
       });
@@ -546,7 +546,7 @@ function query(req, res) {
               error: undefined,
               user_id: undefined,
               user_name: undefined,
-              ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress
+              ip: req.headers[ 'x-forwarded-for' ] || req.connection.remoteAddress
             };
 
             if (typeof (correct) !== 'undefined') {
@@ -586,7 +586,7 @@ function query(req, res) {
               }, data.headers);
               data.content = result.recordset.slice(0, 1000).map(function(row) {
                 Object.keys(row).forEach(key => {
-                  if (row[key] === null) { row[key] = '(NULL)'; }
+                  if (row[ key ] === null) { row[ key ] = '(NULL)'; }
                 });
                 return row;
               });
@@ -623,9 +623,17 @@ function query(req, res) {
                           if (sqlAnswer.toUpperCase().match(/ORDER\s+BY/)) {
                             let i = 0;
                             while (!orderError && i < resultAnswer.recordset.length) {
-                              Object.keys(resultAnswer.recordset[i]).some(key => {
-                                const a = resultAnswer.recordset[i][key];
-                                const b = result.recordset[i][key];
+                              Object.keys(resultAnswer.recordset[ i ]).some(key => {
+                                key = key.toLowerCase();
+                                // This is necessary when column names have differente cases.
+                                const currentRecordAnswer = transform(resultAnswer.recordset[ i ], (acc, value, key) => {
+                                  acc[key.toLowerCase()] = value;
+                                });
+                                const a = currentRecordAnswer[ key ];
+                                const currentRecordResponse = transform(result.recordset[ i ], (acc, value, key) => {
+                                  acc[key.toLowerCase()] = value;
+                                });
+                                const b = currentRecordResponse[ key ];
                                 if (a.constructor === Date) {
                                   if (a.getTime() !== b.getTime()) {
                                     orderError = true;
@@ -684,7 +692,7 @@ async function getDBList(req, res) {
     res.write(JSON.stringify(result.recordset));
   } catch (err) {
     console.log('Error', err);
-      Raven.captureException(err);
+    Raven.captureException(err);
     res.sendStatus(500);
   }
 
@@ -700,13 +708,13 @@ function getQuestionByID(id, callback) {
       return;
     }
     client.query('SELECT * FROM questions WHERE id = $1',
-      [id], function(err, result) {
+      [ id ], function(err, result) {
         if (err) {
           console.error('error running query', err);
           Raven.captureException(err);
         }
         if (result.rows.length > 0) {
-          callback(result.rows[0]);
+          callback(result.rows[ 0 ]);
         }
         done();
       });
@@ -721,7 +729,7 @@ function logAnswer(log) {
       return;
     }
     client.query('INSERT INTO logs (activity, question_id, query, error, user_id, user_name, ip, created) VALUES($1,$2,$3,$4,$5,$6,$7, NOW())',
-      [log.activity, log.question_id, log.query, log.error, log.user_id, log.user_name, log.ip], function(err, result) {
+      [ log.activity, log.question_id, log.query, log.error, log.user_id, log.user_name, log.ip ], function(err, result) {
         if (err) {
           console.error('error running query', err);
           Raven.captureException(err);
@@ -745,7 +753,7 @@ function upsertQuestion(req, res) {
     //if id update
     if (question.id) {
       client.query('UPDATE questions SET text=$2, sql=$3, modified = now() WHERE id = $1 RETURNING id',
-        [question.id, question.text, question.sql], function(err, result) {
+        [ question.id, question.text, question.sql ], function(err, result) {
           if (err) {
             console.error('error running query', err);
             Raven.captureException(err);
@@ -753,14 +761,14 @@ function upsertQuestion(req, res) {
             return;
           }
           if (result.rows.length > 0) {
-            res.send(JSON.stringify(result.rows[0]));
+            res.send(JSON.stringify(result.rows[ 0 ]));
           }
           done();
         });
     } else {
       //else insert
       client.query('INSERT INTO questions (db_schema, text, sql, modified) VALUES ($1, $2, $3, now()) RETURNING id',
-        [question.db_schema, question.text, question.sql], function(err, result) {
+        [ question.db_schema, question.text, question.sql ], function(err, result) {
           if (err) {
             console.error('error running query', err);
             Raven.captureException(err);
@@ -768,7 +776,7 @@ function upsertQuestion(req, res) {
             return;
           }
           if (result.rows.length > 0) {
-            res.send(JSON.stringify(result.rows[0]));
+            res.send(JSON.stringify(result.rows[ 0 ]));
           }
           done();
         });
