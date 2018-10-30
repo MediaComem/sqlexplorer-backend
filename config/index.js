@@ -2,6 +2,9 @@ const knex = require('knex');
 
 const { logger: knexLogger } = require('../utils/knex');
 const env = process.env.NODE_ENV || 'local';
+
+console.log(`[Configuration] Loading configuration for environment '${env}'`);
+
 const config = require(`./env.${env}.js`);
 
 config.knexDb = knex({
