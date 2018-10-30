@@ -25,6 +25,7 @@
     "pg": "^7.4.3",
     "pug": "^2.0.3",
     "raven": "^2.6.3",
+    "tedious": "^3.0.1",
     "tedious-connection-pool": "^1.0.5",
     "tmp": "0.0.33",
     "xmlbuilder": "^9.0.4"

@@ -19,6 +19,8 @@ const path = require('path');
 const logger = require('morgan');
 const { transform } = require('lodash');
 const config = require('./config');
+const TediousConnectionPool = require('tedious-connection-pool');
+const tedious = require('tedious');
 
 const pgUserConfig = {
   user: config.pgsql.user.user,
@@ -463,26 +465,6 @@ app.get('/api/db/:dbname', function(req, res) {
   exportDBSchema(req, res, req.params.dbname);
 });
 
-const mssqlConfig = {
-  user: config.mssql.username,
-  password: config.mssql.password,
-  server: config.mssql.server + (config.mssql.instanceName ? "\\" + config.mssql.instanceName : "")
-};
-
-startApplication(() => {
-  new mssql.ConnectionPool(mssqlConfig).connect()
-    .then(pool => {
-      return pool.request().query('select 1 + 2 as n');
-    })
-    .then(result => console.log(`Connected: ${result.recordset[ 0 ].n}`))
-    .catch(err => {
-      console.log(err instanceof mssql.ConnectionError);
-      console.log('Error connecting to db:', err);
-      console.log('Original error', err.originalError);
-      Raven.captureException(err);
-    });
-});
-
 //export sql sol to pdf
 app.get('/api/pdf/:id', function(req, res) {
   getAssignementById(req.params.id, function(assignment_err, assignment) {
@@ -499,168 +481,369 @@ app.get('/api/pdf/:id', function(req, res) {
   });
 });
 
+const mssqlConfig = {
+  user: config.mssql.username,
+  password: config.mssql.password,
+  server: config.mssql.server + (config.mssql.instanceName ? "\\" + config.mssql.instanceName : "")
+};
+
+const tediousConfig = {
+  userName: config.mssql.username,
+  password: config.mssql.password,
+  server: config.mssql.server,
+  options: {
+    instanceName: config.mssql.instanceName,
+    rowCollectionOnRequestCompletion: true
+  }
+};
+
+const tediousPool = new TediousConnectionPool({}, tediousConfig);
+
+tediousPool.on('error', function(err) {
+  console.error('Tedious Pool Error', err);
+});
+
+startApplication(() => {
+  tediousPool.acquire((err, connection) => {
+    if (err) return console.log('Tedious Pool Acquisition Error', err);
+    const request = new tedious.Request('SELECT 1 + 2 AS n', (err, rowCount, rows) => {
+      if (err) return console.log('Tedious Pool Request Error', err);
+      if (rows[0][0].value === 3) {
+        console.log('Tedious Connected!');
+      }
+      connection.release();
+    });
+
+    connection.execSql(request);
+  });
+});
+
 function query(req, res) {
   let schema = req.body.db.replace(/[^a-z_0-9]/gi, '').toUpperCase();
+  let userResultsMetadata, answerResultsMetadata;
 
-  new mssql.ConnectionPool(mssqlConfig).connect()
-    .then(pool => {
-      const transaction = pool.transaction();
-      transaction.begin(err => {
+  tediousPool.acquire((err, connection) => {
+    if (err) {
+      console.log('Error acquiring connection', err);
+      Raven.captureException(err);
+      return res.sendStatus(500);
+    }
+
+    // Connection done !
+
+    connection.beginTransaction((err) => {
+      if (err) {
+        console.log('Error begining the transaction', err);
+        Raven.captureException(err);
+        connection.release();
+        return res.sendStatus(500);
+      }
+
+      // Transaction started !
+
+      const switchToDatabase = new tedious.Request(`USE ${schema};`, (err, rowCount, rows) => {
         if (err) {
           console.log('Error connecting to db:', err);
-          pool.close();
           Raven.captureException(err);
+          connection.rollbackTransaction(() => connection.release());
           return res.sendStatus(500);
         }
-        transaction.request().query(`USE ${schema};`, (err, result) => {
+
+        // Switched to the database !
+
+        if (!req.body.sql) {
+          connection.rollbackTransaction(() => connection.release());
+          return res.sendStatus(400);
+        }
+
+        const sqlToTest = req.body.sql.replace(/;/g, '');
+        const data = {
+          headers: [],
+          content: [],
+          numrows: 0
+        };
+
+        const testSqlToTest = new tedious.Request(sqlToTest, (err, rowCount, result) => {
           if (err) {
-            console.log('Error executing query:', err);
-            pool.close();
+            console.log('Error executing user query:', err);
             Raven.captureException(err);
-            return res.sendStatus(500);
+            connection.rollbackTransaction(() => connection.release());
+            return res.send(JSON.stringify({ error: err.toString() }));
           }
 
-          if (!req.body.sql) {
-            transaction.rollback().then(() => pool.close());
-            return res.sendStatus(404);
+          // User request executed
+
+          if (result.length > 0) {
+            data.content = result.slice(0, 1000).map(function(row) {
+              return row.map(column => {
+                return column.value === null ? '(NULL)' : column.value;
+              });
+            });
+            data.numrows = result.length;
           }
 
-          const sqlToTest = req.body.sql.replace(/;/g, '');
-
-          transaction.request().query(sqlToTest, (err, result) => {
-            const data = {
-              headers: [],
-              content: [],
-              numrows: 0
-            };
-
-            function answer(correct, msg) {
-              const log = {
-                activity: schema,
-                question_id: undefined,
-                query: req.body.sql,
-                error: undefined,
-                user_id: undefined,
-                user_name: undefined,
-                ip: req.headers[ 'x-forwarded-for' ] || req.connection.remoteAddress
-              };
-
-              if (typeof (correct) !== 'undefined') {
-                data.correct = log.correct = correct;
+          // If the request is an answer to a question...
+          if (req.body.id) {
+            getQuestionByID(req.body.id, question => {
+              if (!Boolean(question)) {
+                console.log('Error fetching the question: no question for this id');
+                connection.rollbackTransaction(() => connection.release());
+                return res.sendStatus(404);
               }
-              if (data.correct) {
-                data.answer = msg;
-              } else {
-                if (typeof (msg) !== 'undefined') {
-                  data.error = log.error = msg;
+              const sqlAnswer = question.sql;
+
+              const sqlAnswerRequest = new tedious.Request(sqlAnswer, (err, rowCount, resultAnswer) => {
+                if (err) {
+                  console.log('Error executing query sqlAnswer:', err);
+                  Raven.captureException(err);
+                  connection.rollbackTransaction(() => connection.release());
+                  return res.sendStatus(500);
                 }
-              }
-              if (req.body.id) {
-                log.question_id = req.body.id;
-              }
-              if (req.body.user_id) {
-                log.user_id = req.body.user_id;
-              }
-              if (req.body.user_name) {
-                log.user_name = req.body.user_name;
-              }
 
-              logAnswer(log);
+                // Check that both result sets have the same row length
+                if (result.length !== resultAnswer.length) {
+                  sendAnswer(false, 'Vérifier conditions et/ou schéma.');
+                  // Check that both result sets have the same column length
+                } else if (userResultsMetadata.length !== answerResultsMetadata.length) {
+                  sendAnswer(false, 'Vérifier SELECT.');
+                } else {
+                  // Check that the union of both requests does not yield any result
+                  const sanitizedSqlToTest = sqlToTest.replace(/;/g, '').toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '');
+                  const sanitizedSqlAnswer = sqlAnswer.replace(/;/g, '').toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '');
+                  const sqlSets = `(${sanitizedSqlAnswer} EXCEPT ${sanitizedSqlToTest}) UNION (${sanitizedSqlToTest} EXCEPT ${sanitizedSqlAnswer})`;
 
-              transaction.commit().then(() => { pool.close(); });
-              res.json(data);
-            }
-
-            if (err) {
-              transaction.rollback().then(() => { pool.close(); });
-              res.send(JSON.stringify({ error: err.toString() }));
-            } else {
-              if (result.recordset.length > 0) {
-                reduce(result.recordset.columns, (acc, value) => {
-                  acc.push(value.name);
-                  return acc;
-                }, data.headers);
-                data.content = result.recordset.slice(0, 1000).map(function(row) {
-                  Object.keys(row).forEach(key => {
-                    if (row[ key ] === null) { row[ key ] = '(NULL)'; }
-                  });
-                  return row;
-                });
-                data.numrows = result.recordset.length;
-              }
-
-              if (req.body.id) {
-                getQuestionByID(req.body.id, question => {
-                  const sqlAnswer = question.sql;
-                  transaction.request().query(sqlAnswer.replace(/;/g, ''), (err, resultAnswer) => {
+                  const sqlSetsRequest = new tedious.Request(sqlSets, (err, rowCount, rows) => {
                     if (err) {
-                      console.log('Error executing query sqlAnswer:', err);
-                      transaction.rollback().then(() => { pool.close(); });
-                      Raven.captureException(err);
-                      return res.sendStatus(500);
-                    }
-                    if (result.recordset.length === resultAnswer.recordset.length) {
-                      if (Object.keys(result.recordset.columns).length !== Object.keys(resultAnswer.recordset.columns).length) {
-                        answer(false, 'vérifier select');
-                      } else {
-                        const sqlSets = `
-                        (${sqlAnswer.replace(/;/g, '').toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')} EXCEPT ${sqlToTest.toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')})
-                        UNION
-                        (${sqlToTest.toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')} EXCEPT ${sqlAnswer.replace(/;/g, '').toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')})
-                      `;
-
-                        transaction.request().query(sqlSets, (err, resultsSets) => {
-                          if (err) {
-                            answer(false, 'erreur de vérification: ' + err.message);
-                          } else if (resultsSets.recordset.length > 0) {
-                            answer(false, 'pas la bonne réponse');
-                          } else {
-                            let orderError = false;
-                            if (sqlAnswer.toUpperCase().match(/ORDER\s+BY/)) {
-                              let i = 0;
-                              while (!orderError && i < resultAnswer.recordset.length) {
-                                Object.keys(resultAnswer.recordset[ i ]).some(key => {
-                                  key = key.toLowerCase();
-                                  // This is necessary when column names have differente cases.
-                                  const currentRecordAnswer = transform(resultAnswer.recordset[ i ], (acc, value, key) => {
-                                    acc[ key.toLowerCase() ] = value;
-                                  });
-                                  const a = currentRecordAnswer[ key ];
-                                  const currentRecordResponse = transform(result.recordset[ i ], (acc, value, key) => {
-                                    acc[ key.toLowerCase() ] = value;
-                                  });
-                                  const b = currentRecordResponse[ key ];
-                                  if (a.constructor === Date) {
-                                    if (a.getTime() !== b.getTime()) {
-                                      orderError = true;
-                                    }
-                                  } else {
-                                    if (a !== b) {
-                                      orderError = true;
-                                    }
-                                  }
-                                  return orderError;
-                                });
-                                i++;
-                              }
+                      sendAnswer(false, `Erreur de vérification : ${err.message}`);
+                    } else if (rowCount !== 0) {
+                      sendAnswer(false, 'Pas la bonne réponse...');
+                    } else {
+                      // Check that the values of each set are in the same order
+                      let orderError = false;
+                      if (sqlAnswer.toUpperCase().match(/ORDER\s+BY/)) {
+                        orderError = resultAnswer.some((answerRow, rowIndex) => {
+                          return answerRow.some((answerColumn, columnIndex) => {
+                            const userRequestValue = result[rowIndex][columnIndex].value;
+                            if (answerColumn.value.constructor === Date) {
+                              return answerColumn.value.getTime() !== userRequestValue.getTime()
+                            } else {
+                              return answerColumn.value !== userRequestValue;
                             }
-                            orderError ? answer(false, 'vérifier ordre') : answer(true, sqlAnswer);
-                          }
+                          });
                         });
                       }
-                    } else {
-                      answer(false, 'vérifier conditions et schéma');
+                      orderError ? sendAnswer(false, 'Vérifier ordre.') : sendAnswer(true, sqlAnswer);
                     }
                   });
-                });
-              } else {
-                answer();
-              }
-            }
+                  connection.execSql(sqlSetsRequest);
+                }
+              });
+              sqlAnswerRequest.on('columnMetadata', columns => answerResultsMetadata = columns);
+              connection.execSql(sqlAnswerRequest);
+            });
+          } else {
+            sendAnswer();
+          }
+        });
+
+        // Get the metadata from the results
+        testSqlToTest.on('columnMetadata', columns => {
+          userResultsMetadata = columns;
+          data.headers = columns.map(column => {
+            return column.colName;
           });
         });
+
+        connection.execSql(testSqlToTest);
+
+        /**
+         * Send a response with the state of the user answer is correct.
+         * This also rollback the initiated transaction and release the connection.
+         * @param {Boolean} correct Indicates wether or not the user answer is correct.
+         * @param {String} msg An optionnal message to be sent to the front-end.
+         */
+        function sendAnswer(correct, msg) {
+
+          if (typeof (correct) !== 'undefined') {
+            data.correct = correct;
+          }
+          if (data.correct) {
+            data.answer = msg;
+          } else if (typeof (msg) !== 'undefined') {
+            data.error = msg;
+          }
+
+          // No need to commit the transaction since it only should have been SELECTs.
+          connection.rollbackTransaction(() => connection.release());
+          return res.json(data);
+        }
+
       });
-    })
+
+      connection.execSql(switchToDatabase);
+    });
+
+  });
+
+  // new mssql.ConnectionPool(mssqlConfig).connect()
+  //   .then(pool => {
+  //     const transaction = pool.transaction();
+  //     transaction.begin(err => {
+  //       if (err) {
+  //         console.log('Error connecting to db:', err);
+  //         pool.close();
+  //         Raven.captureException(err);
+  //         return res.sendStatus(500);
+  //       }
+  //       transaction.request().query(`USE ${schema};`, (err, result) => {
+  //         if (err) {
+  //           console.log('Error executing query:', err);
+  //           pool.close();
+  //           Raven.captureException(err);
+  //           return res.sendStatus(500);
+  //         }
+
+  //         if (!req.body.sql) {
+  //           transaction.rollback().then(() => pool.close());
+  //           return res.sendStatus(404);
+  //         }
+
+  //         const sqlToTest = req.body.sql.replace(/;/g, '');
+
+  //         transaction.request().query(sqlToTest, (err, result) => {
+  //           const data = {
+  //             headers: [],
+  //             content: [],
+  //             numrows: 0
+  //           };
+
+  //           function answer(correct, msg) {
+  //             const log = {
+  //               activity: schema,
+  //               question_id: undefined,
+  //               query: req.body.sql,
+  //               error: undefined,
+  //               user_id: undefined,
+  //               user_name: undefined,
+  //               ip: req.headers[ 'x-forwarded-for' ] || req.connection.remoteAddress
+  //             };
+
+  //             if (typeof (correct) !== 'undefined') {
+  //               data.correct = log.correct = correct;
+  //             }
+  //             if (data.correct) {
+  //               data.answer = msg;
+  //             } else {
+  //               if (typeof (msg) !== 'undefined') {
+  //                 data.error = log.error = msg;
+  //               }
+  //             }
+  //             if (req.body.id) {
+  //               log.question_id = req.body.id;
+  //             }
+  //             if (req.body.user_id) {
+  //               log.user_id = req.body.user_id;
+  //             }
+  //             if (req.body.user_name) {
+  //               log.user_name = req.body.user_name;
+  //             }
+
+  //             logAnswer(log);
+
+  //             transaction.commit().then(() => { pool.close(); });
+  //             res.json(data);
+  //           }
+
+  //           if (err) {
+  //             transaction.rollback().then(() => { pool.close(); });
+  //             res.send(JSON.stringify({ error: err.toString() }));
+  //           } else {
+  //             if (result.recordset.length > 0) {
+  //               reduce(result.recordset.columns, (acc, value) => {
+  //                 acc.push(value.name);
+  //                 return acc;
+  //               }, data.headers);
+  //               data.content = result.recordset.slice(0, 1000).map(function(row) {
+  //                 Object.keys(row).forEach(key => {
+  //                   if (row[ key ] === null) { row[ key ] = '(NULL)'; }
+  //                 });
+  //                 return row;
+  //               });
+  //               data.numrows = result.recordset.length;
+  //             }
+
+  //             if (req.body.id) {
+  //               getQuestionByID(req.body.id, question => {
+  //                 const sqlAnswer = question.sql;
+  //                 transaction.request().query(sqlAnswer.replace(/;/g, ''), (err, resultAnswer) => {
+  //                   if (err) {
+  //                     console.log('Error executing query sqlAnswer:', err);
+  //                     transaction.rollback().then(() => { pool.close(); });
+  //                     Raven.captureException(err);
+  //                     return res.sendStatus(500);
+  //                   }
+  //                   if (result.recordset.length === resultAnswer.recordset.length) {
+  //                     if (Object.keys(result.recordset.columns).length !== Object.keys(resultAnswer.recordset.columns).length) {
+  //                       answer(false, 'vérifier select');
+  //                     } else {
+  //                       const sqlSets = `
+  //                       (${sqlAnswer.replace(/;/g, '').toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')} EXCEPT ${sqlToTest.toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')})
+  //                       UNION
+  //                       (${sqlToTest.toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')} EXCEPT ${sqlAnswer.replace(/;/g, '').toUpperCase().replace(/ORDER\s+BY(.|\n)*/g, '')})
+  //                     `;
+
+  //                       transaction.request().query(sqlSets, (err, resultsSets) => {
+  //                         if (err) {
+  //                           answer(false, 'erreur de vérification: ' + err.message);
+  //                         } else if (resultsSets.recordset.length > 0) {
+  //                           answer(false, 'pas la bonne réponse');
+  //                         } else {
+  //                           let orderError = false;
+  //                           if (sqlAnswer.toUpperCase().match(/ORDER\s+BY/)) {
+  //                             let i = 0;
+  //                             while (!orderError && i < resultAnswer.recordset.length) {
+  //                               Object.keys(resultAnswer.recordset[ i ]).some(key => {
+  //                                 key = key.toLowerCase();
+  //                                 // This is necessary when column names have differente cases.
+  //                                 const currentRecordAnswer = transform(resultAnswer.recordset[ i ], (acc, value, key) => {
+  //                                   acc[ key.toLowerCase() ] = value;
+  //                                 });
+  //                                 const a = currentRecordAnswer[ key ];
+  //                                 const currentRecordResponse = transform(result.recordset[ i ], (acc, value, key) => {
+  //                                   acc[ key.toLowerCase() ] = value;
+  //                                 });
+  //                                 const b = currentRecordResponse[ key ];
+  //                                 if (a.constructor === Date) {
+  //                                   if (a.getTime() !== b.getTime()) {
+  //                                     orderError = true;
+  //                                   }
+  //                                 } else {
+  //                                   if (a !== b) {
+  //                                     orderError = true;
+  //                                   }
+  //                                 }
+  //                                 return orderError;
+  //                               });
+  //                               i++;
+  //                             }
+  //                           }
+  //                           orderError ? answer(false, 'vérifier ordre') : answer(true, sqlAnswer);
+  //                         }
+  //                       });
+  //                     }
+  //                   } else {
+  //                     answer(false, 'vérifier conditions et schéma');
+  //                   }
+  //                 });
+  //               });
+  //             } else {
+  //               answer();
+  //             }
+  //           }
+  //         });
+  //       });
+  //     });
+  //   })
 }
 
 async function getDBList(req, res) {
@@ -711,6 +894,8 @@ function getQuestionByID(id, callback) {
         }
         if (result.rows.length > 0) {
           callback(result.rows[ 0 ]);
+        } else {
+          callback();
         }
         done();
       });
