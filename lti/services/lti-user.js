@@ -58,6 +58,10 @@ function getFromTC(tcUserId, ltiToolConsumerId) {
   });
 }
 
+function isInstructor(ltiSession) {
+  return ltiSession.rawData.roles.includes("Instructor");
+}
+
 function create(userData) {
   return knex('lti_user').insert(userData).returning('*')
     .then(result => result[0]);
@@ -78,4 +82,4 @@ async function updateScore(score, ltiSession) {
   await outcomeService.replaceResult(score);
 }
 
-module.exports = { upsert, get, getFromTC, updateScore };
+module.exports = { upsert, get, getFromTC, updateScore, isInstructor };

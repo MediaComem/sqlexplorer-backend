@@ -1,13 +1,15 @@
 const express = require('express');
 const expressSession = require('express-session');
+const { pick } = require('lodash');
 
 const config = require('../config');
-const { ltiRequestValidator, ltiSessionValidator, ltiXAssignmentValidator } = require('./route-validators');
+const { ltiRequestValidator, ltiSessionValidator, ltiXAssignmentValidator, ltiInstructorValidator } = require('./route-validators');
 const LtiContentItemLink = require('./models/lti-content-item-link.class');
 const ResponseFormData = require('./models/response-form-data.class');
 const assignmentService = require('../lti/services/assignments');
 const ltiUserService = require('./services/lti-user');
 const responseService = require('./services/responses');
+const questionService = require('./services/questions');
 const { LtiSessionError } = require('./utils/custom-errors');
 
 const router = express.Router();
@@ -16,6 +18,10 @@ router.use(expressSession(config.session));
 router.use(express.urlencoded());
 router.use(express.json());
 
+/**
+ * Route that should be accessed by the LTI Tool Coonsumer when a user wants to select a Tool activity
+ * It renders the `item-selection` templates containing the list of all the available assignments.
+ */
 router.post('/select',
   ltiRequestValidator,
   async (req, res) => {
@@ -23,6 +29,10 @@ router.post('/select',
   }
 );
 
+/**
+ * Route that should be accessed by the LTI Tool Consumer when a user has selected an assignment.
+ * It sends an LTI Response to the TC that contains the properties of the selected assignment.
+ */
 router.post('/selected',
   ltiSessionValidator,
   async (req, res) => {
@@ -40,6 +50,10 @@ router.post('/selected',
   }
 );
 
+/**
+ * This is the entry point of any LTI assignment.
+ * It check the access rights and then redirect to the requested assignment.
+ */
 router.post('/launch',
   ltiRequestValidator,
   ltiUserService.upsert,
@@ -51,6 +65,12 @@ router.post('/launch',
   }
 );
 
+/**
+ * **This route can only be accessed if the user accessed the assignment through an LTI Launch Request.**
+ *
+ * Loads an assignment based on its `:id`.
+ * If one tries to access this route directly, an error will be shown instead.
+ */
 router.get('/assignment/:id',
   ltiSessionValidator,
   ltiXAssignmentValidator,
@@ -61,6 +81,12 @@ router.get('/assignment/:id',
   }
 );
 
+/**
+ * **This route can only be accessed if the user accessed the assignment through an LTI Launch Request.**
+ *
+ * Route called by the front-end when a user submit their response to a specific SQL question.
+ * It saves the response in the DB and, if neceserry, notifiy the TC that the user's note should be updated.
+ */
 router.post('/assignment/:id/question/:qId/response',
   ltiSessionValidator,
   ltiXAssignmentValidator,
@@ -79,9 +105,14 @@ router.post('/assignment/:id/question/:qId/response',
       is_correct: req.body.isCorrect
     }
     try {
-      if (req.body.userScore) await ltiUserService.updateScore(req.body.userScore, req.session.lti);
-      const questionStateId = await responseService.upsertQuestionState(responseData);
-      const response = await responseService.addToQuestionState(questionStateId, responseData);
+      let response;
+      if (ltiUserService.isInstructor(req.session.lti)) {
+        response = pick(responseData, ['sql', 'is_correct']);
+      } else {
+        if (req.body.userScore) await ltiUserService.updateScore(req.body.userScore, req.session.lti);
+        const questionStateId = await responseService.upsertQuestionState(responseData);
+        response = await responseService.addToQuestionState(questionStateId, responseData);
+      }
       res.json({ saved: true, history: response });
     } catch (err) {
       console.log(err);
@@ -90,6 +121,11 @@ router.post('/assignment/:id/question/:qId/response',
   }
 );
 
+/**
+ * **This route can only be accessed if the user accessed the assignment through an LTI Launch Request.**
+ *
+ * Route that allows to retrieve a user's question history, that is all the responses they submitted for this question of this assignment.
+ */
 router.get('/assignment/:id/question/:qId/history',
   ltiSessionValidator,
   ltiXAssignmentValidator,
@@ -103,10 +139,32 @@ router.get('/assignment/:id/question/:qId/history',
   }
 );
 
+router.get('/assignment/:id/question/:qId/solution',
+  ltiSessionValidator,
+  ltiXAssignmentValidator,
+  ltiInstructorValidator,
+  async (req, res, next) => {
+    try {
+      const questionSolution = await questionService.getSolution(req.params.qId);
+      res.send(questionSolution);
+    } catch (err) {
+      res.status(500).json(err);
+    }
+  }
+)
+
+/**
+ * **This route can only be accessed if the user accessed the assignment through an LTI Launch Request.**
+ *
+ * Send all the current user's data that have been provided by the TC by the original LTI Launch Request.
+ */
 router.get('/me',
   ltiSessionValidator,
   (req, res) => {
-    res.json(req.session.lti.user);
+    const me = req.session.lti.user;
+    // Checks if the current user has the `Instructor` LTI Roles and add this to the returned object.
+    me.isInstructor = ltiUserService.isInstructor(req.session.lti);
+    res.json(me);
   }
 );
 

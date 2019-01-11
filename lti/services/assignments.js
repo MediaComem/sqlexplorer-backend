@@ -25,7 +25,7 @@ async function getAssignmentWithQuestionList(req, res, next) {
       throw new Error(`Unable to find an assignment with this id : ${req.params.id}.`);
     }
     if (questions.length === 0) {
-      throw new Error(`The assignment with id ${req.params.id} does not have any related questons.`);
+      throw new Error(`The assignment with id ${req.params.id} does not have any related questions.`);
     }
     assignment.questions = questions;
     res.assignmentData = assignment;

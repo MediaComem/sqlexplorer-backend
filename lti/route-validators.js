@@ -4,6 +4,7 @@ const { KnexNonceStore } = require('@mediacomem/knex-nonce-store');
 const config = require('../config');
 const lti = require('./utils/ims-lti-mutator');
 const { LtiConsumerKeyError, LtiSessionError } = require('./utils/custom-errors');
+const { isInstructor } = require('./services/lti-user');
 
 /**
  * Middleware function that checks if the request is a valid LTI request.
@@ -58,6 +59,21 @@ function ltiSessionValidator(req, res, next) {
 }
 
 /**
+ * Middleware that checks if the user has the LTI "Instructor" role.
+ * If not, the `next` callback is called with an Error.
+ * @param {Request} req The express request.
+ * @param {Response} res The express response.
+ * @param {Function} next The next express function.
+ */
+function ltiInstructorValidator(req, res, next) {
+  if (!isInstructor(req.session.lti)) {
+    next(new Error('You are not authorized to do this action.'));
+  } else {
+    next();
+  }
+}
+
+/**
  * Middleware that checks if the user tries to access an assignment to which he has not been given access.
  * This is done by comparing the `id` route param value to the `custom_assignment_id` session value.
  * @param {Request} req The express request.
@@ -84,5 +100,6 @@ function ltiAvailabilityValidator(req, res, next) {
 module.exports = {
   ltiRequestValidator,
   ltiSessionValidator,
-  ltiXAssignmentValidator
+  ltiXAssignmentValidator,
+  ltiInstructorValidator
 };
