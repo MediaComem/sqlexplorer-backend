@@ -1,6 +1,7 @@
 const express = require('express');
-const expressSession = require('express-session');
-const { pick } = require('lodash');
+const session = require('express-session');
+const RedisStore = require('connect-redis')(session);
+const { pick, merge } = require('lodash');
 
 const config = require('../config');
 const { ltiRequestValidator, ltiSessionValidator, ltiXAssignmentValidator, ltiInstructorValidator } = require('./route-validators');
@@ -14,7 +15,7 @@ const { LtiSessionError } = require('./utils/custom-errors');
 
 const router = express.Router();
 
-router.use(expressSession(config.session));
+router.use(session(merge({ store: new RedisStore() }, config.session)));
 router.use(express.urlencoded());
 router.use(express.json());
 
@@ -94,7 +95,7 @@ router.post('/assignment/:id/question/:qId/response',
     // User id is retrieve from the session
     const userId = req.session.lti.user.id;
     if (!userId) next(new LtiSessionError('Unable to retrieve your identity from the session data.'));
-    // Body must contain : value, isCorrect, position
+    // Body must contain : sql, isCorrect
     if (req.body.sql === undefined || req.body.isCorrect === undefined) next(new Error('The request body does not contains the expected keys'));
     const responseData = {
       assignment_id: req.params.id,
@@ -107,7 +108,7 @@ router.post('/assignment/:id/question/:qId/response',
     try {
       let response;
       if (ltiUserService.isInstructor(req.session.lti)) {
-        response = pick(responseData, ['sql', 'is_correct']);
+        response = pick(responseData, [ 'sql', 'is_correct' ]);
       } else {
         if (req.body.userScore) await ltiUserService.updateScore(req.body.userScore, req.session.lti);
         const questionStateId = await responseService.upsertQuestionState(responseData);

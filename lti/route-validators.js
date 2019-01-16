@@ -1,10 +1,12 @@
 const { get } = require('lodash');
-const { KnexNonceStore } = require('@mediacomem/knex-nonce-store');
+const redisClient = require('redis').createClient();
 
 const config = require('../config');
 const lti = require('./utils/ims-lti-mutator');
 const { LtiConsumerKeyError, LtiSessionError } = require('./utils/custom-errors');
 const { isInstructor } = require('./services/lti-user');
+
+const redisNonceStore = new lti.Stores.RedisStore(redisClient);
 
 /**
  * Middleware function that checks if the request is a valid LTI request.
@@ -30,7 +32,7 @@ async function ltiRequestValidator(req, res, next) {
   if (req.body.lti_message_type === 'basic-lti-launch-request' && !Boolean(req.body.user_id)) {
     return next(new Error("LTI request is missing a 'user_id' value. Please try changing the settings of your LMS so that it provides this information when launching this tool."));
   }
-  const provider = new lti.Provider(consumer.key, consumer.secret, new KnexNonceStore(config.knexDb));
+  const provider = new lti.Provider(consumer.key, consumer.secret, redisNonceStore);
   try {
     await provider.validRequest(req);
     req.session.lti = {
