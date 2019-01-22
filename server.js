@@ -5,19 +5,20 @@ const Pool = require('pg').Pool;
 const mssql = require('mssql');
 const app = express();
 const cors = require('cors');
-const basicAuth = require('basic-auth-connect');
-const xmlBuilder = require('xmlbuilder');
-const AdmZip = require('adm-zip');
+// const basicAuth = require('basic-auth-connect');
+// const xmlBuilder = require('xmlbuilder');
+// const AdmZip = require('adm-zip');
 const exec = require("child_process").exec;
 const tmp = require('tmp');
 const Raven = require('raven');
 const passport = require('passport');
 const BasicStrategy = require('passport-http').BasicStrategy;
-const reduce = require('object.reduce');
+// const reduce = require('object.reduce');
 const ltiRouter = require('./lti/router');
 const path = require('path');
 const logger = require('morgan');
-const { transform } = require('lodash');
+// const { transform } = require('lodash');
+const { get } = require('lodash');
 const config = require('./config');
 const TediousConnectionPool = require('tedious-connection-pool');
 const tedious = require('tedious');
@@ -38,8 +39,8 @@ const pgAdminConfig = {
   database: config.pgsql.admin.database
 }
 
-const pgConString = `postgres://${config.pgsql.user.user}:${config.pgsql.user.password}@${config.pgsql.user.host || 'localhost'}:${config.pgsql.user.port || 5432}/${config.pgsql.user.database}`;
-const pgConAdminString = `postgres://${config.pgsql.admin.user}:${config.pgsql.admin.password}@${config.pgsql.admin.host || 'localhost'}:${config.pgsql.admin.port || 5432}/${config.pgsql.admin.database}`;
+// const pgConString = `postgres://${config.pgsql.user.user}:${config.pgsql.user.password}@${config.pgsql.user.host || 'localhost'}:${config.pgsql.user.port || 5432}/${config.pgsql.user.database}`;
+// const pgConAdminString = `postgres://${config.pgsql.admin.user}:${config.pgsql.admin.password}@${config.pgsql.admin.host || 'localhost'}:${config.pgsql.admin.port || 5432}/${config.pgsql.admin.database}`;
 
 const pgPool = new Pool(pgUserConfig);
 // const pgPool = new Pool({ connectionString: pgConString });
@@ -84,8 +85,8 @@ app.use('/assets', express.static(path.join(__dirname, '/views/assets')));
 app.use(passport.initialize());
 
 const jsonParser = bodyParser.json();
-const txtParser = bodyParser.text();
-const urlencodedParser = bodyParser.urlencoded({ extended: false });
+// const txtParser = bodyParser.text();
+// const urlencodedParser = bodyParser.urlencoded({ extended: false });
 
 app.use('/lti', ltiRouter);
 
@@ -624,7 +625,7 @@ function query(req, res) {
                         orderError = resultAnswer.some((answerRow, rowIndex) => {
                           return answerRow.some((answerColumn, columnIndex) => {
                             const userRequestValue = result[rowIndex][columnIndex].value;
-                            if (answerColumn.value.constructor === Date) {
+                            if (get(answerColumn, ['value', 'constructor'], null) === Date) {
                               return answerColumn.value.getTime() !== userRequestValue.getTime()
                             } else {
                               return answerColumn.value !== userRequestValue;
