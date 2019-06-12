@@ -1,57 +1,40 @@
-# SQL-Explorer Backend (JS-Oracle)
+# SQL Explorer backend
 
-A small version of sqlexplorer backend which connects and evaluates queries against Oracle Database.
+This is the backend for the [SQL Explorer](https://sqlexplorer.heig-vd.ch) application.
 
-Questions for assignments are kept in original Postgres Database similar to original php version of sqlexplorer.
+The previous README file can be found [here](OLD_README.md). You'll notably find there some basic information on the API endpoints.
 
-sql_to_pdf is the php part which generated pdf with answers from questions. Dependencies are *geshi* and *tcpdf*.
+This is an Express application, that connects to a PostgreSQL database (that contains the application data), along with several databases on an SQL Server (each of which represents an assignment subject).
 
+The app is composed primarily of a single file [`server.js`](server.js) where almost all the routes and logic is written, with the exception of the LTI stuff (see below).
 
-## server API
+> The front-end for this app is available on [its own repository][sql-front].
 
-### POST
-User
-/api/evaluate 
+## LTI
 
-Admin
-/api/assignment
-/api/assignment/:assignmentId/question
-/api/questions
+This application is compatible with the [LTI standard][lti], under its v1.1 version.
 
-### GET
+All LTI related code is found in the `lti` folder.
 
-User
+## Scripts
 
-```
-/api/db/list // list possible assignments
-```
+The [`package.json` file](package.json) lists the available script such as the dev script and those for deploying the app.
 
-Admin
-```
-/api/db/:dbname for wwwsqldesigner to generate Schema Images
-/api/pdf/:id pdf solution
-```
+## Deployment
 
-Question / assignment  management
-```
-/api/questiontext/:id
-/api/question/:id
-/api/question
-/api/scorm/:id
-/api/logs
-/api/logs/:user_id
-/api/tags
-/api/assignment/list
-/api/assignment/:id
-```
+The deployment is done using the [`bash-deploy` plugin][bash-deploy] and the two files [`sqlexplorer.conf`](sqlexplorer.conf) and [`staging-sqlexplorer.conf`](staging-sqlexplorer.conf)
+The [`ecosystem.config.js` file](ecosystem.config.js) is used by PM2 on the servers
 
-## Dependencies documentation
+## Check that everything's good
 
-This project depends upon these packages :
+When deployed, you can make some very simple tests on the webapp to see if everything's all right:
 
-* `mssql` - A Microsoft SQL Server client - https://www.npmjs.com/package/mssql
-* `object.reduce` - A library that allows using `reduce` with Objects - https://www.npmjs.com/package/object.reduce
+* Go to https://sqlexplorer.heig-vd.ch` and check that you see something
+* Write any SQL query for the displayed database and check that it returns something
+* Write any wrong query and check that the error displayed is not something like `Internal Server Error 505`...
+* Go to the admin page and check that the you can naviguate around
+* You could also try to create a new assignment (though you'll need to remove it from the database afterward)
 
-### Misc documentation
-
-* `tedious` - The `mssql` package is based on the Tedious driver - http://tediousjs.github.io/tedious/getting-started.html
+[sql-front]: https://github.com/MediaComem/sqlexplorer-frontend
+[lti]: https://www.imsglobal.org/activity/learning-tools-interoperability
+[bash-deploy]: https://www.npmjs.com/package/bash-deploy
